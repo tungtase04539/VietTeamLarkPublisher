@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { PenLine, Eye } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { md, preprocessMarkdown, applyTheme } from './lib/markdown';
 import { makeWeChatCompatible } from './lib/wechatCompat';
@@ -18,6 +19,7 @@ export default function App() {
     const [copied, setCopied] = useState(false);
     const [isCopying, setIsCopying] = useState(false);
     const [previewDevice, setPreviewDevice] = useState<'mobile' | 'tablet' | 'pc'>('pc');
+    const [activePanel, setActivePanel] = useState<'editor' | 'preview'>('editor');
     const previewRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -96,8 +98,8 @@ export default function App() {
     };
 
     const deviceWidthClass = () => {
-        if (previewDevice === 'mobile') return 'w-[480px]';
-        if (previewDevice === 'tablet') return 'w-[768px]';
+        if (previewDevice === 'mobile') return 'w-[480px] max-w-full';
+        if (previewDevice === 'tablet') return 'w-[768px] max-w-full';
         return 'w-[840px] xl:w-[1024px] max-w-[95%]';
     };
 
@@ -112,8 +114,40 @@ export default function App() {
 
             <Header themeMode={themeMode} onToggleTheme={toggleTheme} />
 
-            {/* 排版设置 & 工具栏 */}
-            <div className={`glass-toolbar grid grid-cols-1 ${gridLayoutClass()} px-0 z-[90] transition-all duration-500`}>
+            {/* 移动端 Tab 切换 */}
+            <div className="md:hidden glass-toolbar flex items-center z-[90]">
+                <button
+                    onClick={() => setActivePanel('editor')}
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 text-[13px] font-semibold transition-colors border-b-2 ${activePanel === 'editor' ? 'text-[#0066cc] dark:text-[#0a84ff] border-[#0066cc] dark:border-[#0a84ff]' : 'text-[#86868b] dark:text-[#a1a1a6] border-transparent'}`}
+                >
+                    <PenLine size={15} />
+                    编辑
+                </button>
+                <button
+                    onClick={() => setActivePanel('preview')}
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 text-[13px] font-semibold transition-colors border-b-2 ${activePanel === 'preview' ? 'text-[#0066cc] dark:text-[#0a84ff] border-[#0066cc] dark:border-[#0a84ff]' : 'text-[#86868b] dark:text-[#a1a1a6] border-transparent'}`}
+                >
+                    <Eye size={15} />
+                    预览
+                </button>
+            </div>
+
+            {/* 排版设置 & 工具栏 (桌面端) */}
+            <div className={`glass-toolbar hidden md:grid grid-cols-1 ${gridLayoutClass()} px-0 z-[90] transition-all duration-500`}>
+                <ThemeSelector activeTheme={activeTheme} onThemeChange={setActiveTheme} />
+                <Toolbar
+                    previewDevice={previewDevice}
+                    onDeviceChange={setPreviewDevice}
+                    onExportPdf={handleExportPdf}
+                    onExportHtml={handleExportHtml}
+                    onCopy={handleCopy}
+                    copied={copied}
+                    isCopying={isCopying}
+                />
+            </div>
+
+            {/* 移动端工具栏 (主题 + 复制按钮) */}
+            <div className="md:hidden glass-toolbar flex items-center z-[90]">
                 <ThemeSelector activeTheme={activeTheme} onThemeChange={setActiveTheme} />
                 <Toolbar
                     previewDevice={previewDevice}
@@ -127,9 +161,13 @@ export default function App() {
             </div>
 
             {/* 编辑区 & 预览区 */}
-            <main className={`flex-1 overflow-hidden grid grid-cols-1 ${gridLayoutClass()} relative lg:h-[calc(100vh-130px)] transition-all duration-500`}>
-                <EditorPanel markdownInput={markdownInput} onInputChange={setMarkdownInput} />
-                <PreviewPanel renderedHtml={renderedHtml} deviceWidthClass={deviceWidthClass()} previewRef={previewRef} />
+            <main className={`flex-1 overflow-hidden grid grid-cols-1 ${gridLayoutClass()} relative transition-all duration-500`}>
+                <div className={`${activePanel === 'editor' ? 'flex' : 'hidden'} md:flex flex-col overflow-hidden`}>
+                    <EditorPanel markdownInput={markdownInput} onInputChange={setMarkdownInput} />
+                </div>
+                <div className={`${activePanel === 'preview' ? 'flex' : 'hidden'} md:flex flex-col overflow-hidden`}>
+                    <PreviewPanel renderedHtml={renderedHtml} deviceWidthClass={deviceWidthClass()} previewRef={previewRef} />
+                </div>
             </main>
 
         </div>

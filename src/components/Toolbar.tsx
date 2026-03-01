@@ -13,8 +13,8 @@ interface ToolbarProps {
 
 export default function Toolbar({ previewDevice, onDeviceChange, onExportPdf, onExportHtml, onCopy, copied, isCopying }: ToolbarProps) {
     return (
-        <div className="flex items-center justify-between px-6 py-3">
-            <div className="flex bg-[#00000008] dark:bg-[#ffffff10] p-1 rounded-full backdrop-blur-md">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3">
+            <div className="hidden md:flex bg-[#00000008] dark:bg-[#ffffff10] p-1 rounded-full backdrop-blur-md">
                 <button
                     onClick={() => onDeviceChange('mobile')}
                     className={`p-2 rounded-full transition-all ${previewDevice === 'mobile' ? 'bg-white dark:bg-[#2c2c2e] shadow-sm' : 'text-[#86868b] dark:text-[#a1a1a6] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7]'}`}
@@ -67,7 +67,8 @@ export default function Toolbar({ previewDevice, onDeviceChange, onExportPdf, on
                     className={copied ? "apple-copy-btn-success apple-copy-btn" : isCopying ? "apple-copy-btn opacity-80 cursor-not-allowed" : "apple-copy-btn"}
                 >
                     {copied ? <CheckCircle2 size={16} /> : isCopying ? <Loader2 className="animate-spin" size={16} /> : <Copy size={16} />}
-                    {copied ? '已复制！请贴往公众号' : isCopying ? '正在打包图片...' : '复制到公众号'}
+                    <span className="hidden sm:inline">{copied ? '已复制！请贴往公众号' : isCopying ? '正在打包图片...' : '复制到公众号'}</span>
+                    <span className="sm:hidden">{copied ? '已复制' : isCopying ? '打包中...' : '复制'}</span>
                 </motion.button>
             </div>
         </div>
