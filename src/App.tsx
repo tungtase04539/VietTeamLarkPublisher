@@ -23,7 +23,8 @@ export default function App() {
     const [scrollSyncEnabled, setScrollSyncEnabled] = useState(true);
     const previewRef = useRef<HTMLDivElement>(null);
     const editorScrollRef = useRef<HTMLTextAreaElement>(null);
-    const previewScrollRef = useRef<HTMLDivElement>(null);
+    const previewOuterScrollRef = useRef<HTMLDivElement>(null);
+    const previewInnerScrollRef = useRef<HTMLDivElement>(null);
     const scrollSyncLockRef = useRef<'editor' | 'preview' | null>(null);
     const scrollLockReleaseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -57,12 +58,25 @@ export default function App() {
     }, [scrollSyncEnabled]);
 
     useEffect(() => {
+        scrollSyncLockRef.current = null;
+        if (scrollLockReleaseTimeoutRef.current) {
+            clearTimeout(scrollLockReleaseTimeoutRef.current);
+            scrollLockReleaseTimeoutRef.current = null;
+        }
+    }, [previewDevice]);
+
+    useEffect(() => {
         return () => {
             if (scrollLockReleaseTimeoutRef.current) {
                 clearTimeout(scrollLockReleaseTimeoutRef.current);
             }
         };
     }, []);
+
+    const getActivePreviewScrollElement = () => {
+        if (previewDevice === 'pc') return previewOuterScrollRef.current;
+        return previewInnerScrollRef.current;
+    };
 
     const syncScrollPosition = (
         sourceElement: HTMLElement,
@@ -97,13 +111,22 @@ export default function App() {
 
     const handleEditorScroll = () => {
         const editorElement = editorScrollRef.current;
-        const previewElement = previewScrollRef.current;
+        const previewElement = getActivePreviewScrollElement();
         if (!editorElement || !previewElement) return;
         syncScrollPosition(editorElement, previewElement, 'editor');
     };
 
-    const handlePreviewScroll = () => {
-        const previewElement = previewScrollRef.current;
+    const handlePreviewOuterScroll = () => {
+        if (previewDevice !== 'pc') return;
+        const previewElement = previewOuterScrollRef.current;
+        const editorElement = editorScrollRef.current;
+        if (!previewElement || !editorElement) return;
+        syncScrollPosition(previewElement, editorElement, 'preview');
+    };
+
+    const handlePreviewInnerScroll = () => {
+        if (previewDevice === 'pc') return;
+        const previewElement = previewInnerScrollRef.current;
         const editorElement = editorScrollRef.current;
         if (!previewElement || !editorElement) return;
         syncScrollPosition(previewElement, editorElement, 'preview');
@@ -249,8 +272,10 @@ export default function App() {
                         deviceWidthClass={deviceWidthClass()}
                         previewDevice={previewDevice}
                         previewRef={previewRef}
-                        previewScrollRef={previewScrollRef}
-                        onPreviewScroll={handlePreviewScroll}
+                        previewOuterScrollRef={previewOuterScrollRef}
+                        previewInnerScrollRef={previewInnerScrollRef}
+                        onPreviewOuterScroll={handlePreviewOuterScroll}
+                        onPreviewInnerScroll={handlePreviewInnerScroll}
                         scrollSyncEnabled={scrollSyncEnabled}
                     />
                 </div>
