@@ -57,7 +57,7 @@ export default function Toolbar({ previewDevice, onDeviceChange, onExportPdf, on
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.96 }}
                     onClick={onExportPdf}
-                    className="apple-export-btn hidden sm:flex !bg-[#00000008] dark:!bg-[#ffffff10] border-transparent"
+                    className="apple-export-btn !hidden sm:!flex !bg-[#00000008] dark:!bg-[#ffffff10] border-transparent"
                 >
                     <Download size={14} />
                     导出 PDF
@@ -67,7 +67,7 @@ export default function Toolbar({ previewDevice, onDeviceChange, onExportPdf, on
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.96 }}
                     onClick={onExportHtml}
-                    className="apple-export-btn hidden lg:flex !bg-[#00000008] dark:!bg-[#ffffff10] border-transparent"
+                    className="apple-export-btn !hidden lg:!flex !bg-[#00000008] dark:!bg-[#ffffff10] border-transparent"
                 >
                     <Download size={14} />
                     导出 HTML

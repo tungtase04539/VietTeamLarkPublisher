@@ -239,9 +239,11 @@ export default function App() {
                 />
             </div>
 
-            {/* 移动端工具栏 (主题 + 复制按钮) */}
-            <div className="md:hidden glass-toolbar flex items-center z-[90]">
-                <ThemeSelector activeTheme={activeTheme} onThemeChange={setActiveTheme} />
+            {/* 移动端工具栏：分两行避免按钮被主题栏挤出可视区 */}
+            <div className="md:hidden glass-toolbar z-[90]">
+                <div className="overflow-x-auto no-scrollbar border-b border-[#00000010] dark:border-[#ffffff10]">
+                    <ThemeSelector activeTheme={activeTheme} onThemeChange={setActiveTheme} />
+                </div>
                 <Toolbar
                     previewDevice={previewDevice}
                     onDeviceChange={setPreviewDevice}
