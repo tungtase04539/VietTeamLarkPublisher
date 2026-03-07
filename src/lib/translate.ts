@@ -87,6 +87,8 @@ async function callTranslateAPI(text: string): Promise<string> {
             return callOpenAIAPI(text, settings.model, settings.apiKey, 'https://api.openai.com/v1', prompt);
         case 'anthropic':
             return callAnthropicAPI(text, settings.model, settings.apiKey, prompt);
+        case '302ai':
+            return callOpenAIAPI(text, settings.model, settings.ai302Key, 'https://api.302.ai/v1', prompt);
         case 'openai-compatible':
             return callOpenAIAPI(text, settings.model, settings.apiKey, settings.baseUrl, prompt);
         default:

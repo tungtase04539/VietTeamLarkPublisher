@@ -16,6 +16,7 @@ const PROVIDER_LABELS: Record<ModelProvider, string> = {
     gemini: 'Google Gemini',
     openai: 'OpenAI',
     anthropic: 'Anthropic (Claude)',
+    '302ai': '302.ai (proxy — 1 key dùng tất cả model)',
     'openai-compatible': 'Custom (OpenAI-compatible)',
 };
 
@@ -23,7 +24,6 @@ export default function TranslateSettingsModal({ isOpen, onClose }: Props) {
     const [settings, setSettings] = useState<TranslateSettings>(loadTranslateSettings);
     const [showPrompt, setShowPrompt] = useState(false);
 
-    // reload when opened
     useEffect(() => {
         if (isOpen) setSettings(loadTranslateSettings());
     }, [isOpen]);
@@ -36,39 +36,34 @@ export default function TranslateSettingsModal({ isOpen, onClose }: Props) {
         onClose();
     };
 
-    const handleReset = () => {
-        setSettings({ ...DEFAULT_SETTINGS });
-    };
+    const handleReset = () => setSettings({ ...DEFAULT_SETTINGS });
 
-    // Select preset
     const handlePresetChange = (idx: number) => {
         const p = PRESET_MODELS[idx];
         setSettings(s => ({ ...s, provider: p.provider, model: p.model }));
     };
 
-    const currentPreset = PRESET_MODELS.findIndex(
+    const currentPresetIdx = PRESET_MODELS.findIndex(
         p => p.provider === settings.provider && p.model === settings.model
     );
 
-    const apiPlaceholder = PRESET_MODELS.find(
-        p => p.provider === settings.provider
-    )?.placeholder ?? 'API Key';
-
-    const isDefault = settings.provider === DEFAULT_SETTINGS.provider
+    const apiPlaceholder = PRESET_MODELS[currentPresetIdx]?.placeholder ?? 'API Key';
+    const isDefaultGemini = settings.provider === DEFAULT_SETTINGS.provider
         && settings.model === DEFAULT_SETTINGS.model
         && !settings.apiKey;
+
+    // Group presets for display
+    const groups = Array.from(new Set(PRESET_MODELS.map(p => p.group)));
 
     return (
         <AnimatePresence>
             {isOpen && (
                 <>
-                    {/* Backdrop */}
                     <motion.div
                         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                         className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[200]"
                         onClick={onClose}
                     />
-                    {/* Modal */}
                     <motion.div
                         initial={{ opacity: 0, y: 16, scale: 0.97 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -85,7 +80,7 @@ export default function TranslateSettingsModal({ isOpen, onClose }: Props) {
                                         Cài đặt dịch thuật
                                     </h2>
                                     <p className="text-[12px] text-[#86868b] mt-0.5">
-                                        Model và API key sẽ được lưu cục bộ trong trình duyệt
+                                        Settings lưu cục bộ trong trình duyệt
                                     </p>
                                 </div>
                                 <button
@@ -104,12 +99,16 @@ export default function TranslateSettingsModal({ isOpen, onClose }: Props) {
                                     </label>
                                     <div className="relative">
                                         <select
-                                            value={currentPreset >= 0 ? currentPreset : PRESET_MODELS.length - 1}
+                                            value={currentPresetIdx >= 0 ? currentPresetIdx : 0}
                                             onChange={e => handlePresetChange(Number(e.target.value))}
                                             className="w-full appearance-none bg-[#f5f5f7] dark:bg-[#2c2c2e] border-0 rounded-xl px-4 py-3 text-[14px] text-[#1d1d1f] dark:text-[#f5f5f7] pr-10 focus:outline-none focus:ring-2 focus:ring-[#0066cc]/30"
                                         >
-                                            {PRESET_MODELS.map((p, i) => (
-                                                <option key={i} value={i}>{p.label}</option>
+                                            {groups.map(group => (
+                                                <optgroup key={group} label={group}>
+                                                    {PRESET_MODELS.map((p, i) => p.group === group ? (
+                                                        <option key={i} value={i}>{p.label}</option>
+                                                    ) : null)}
+                                                </optgroup>
                                             ))}
                                         </select>
                                         <ChevronDown size={14} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#86868b] pointer-events-none" />
@@ -124,13 +123,27 @@ export default function TranslateSettingsModal({ isOpen, onClose }: Props) {
                                     )}
                                 </div>
 
-                                {/* API Key */}
-                                {!isDefault && (
+                                {/* 302.ai Key */}
+                                {settings.provider === '302ai' && (
                                     <div className="space-y-1.5">
                                         <label className="text-[12px] font-medium text-[#86868b] uppercase tracking-wide">
-                                            API Key
-                                            {isDefault && <span className="ml-2 text-[#34c759] normal-case font-normal">• sử dụng key mặc định</span>}
+                                            302.ai API Key
+                                            <span className="ml-2 normal-case font-normal text-[#34c759]">• dùng được Claude, GPT, Gemini, DeepSeek...</span>
                                         </label>
+                                        <input
+                                            type="password"
+                                            value={settings.ai302Key}
+                                            onChange={e => up('ai302Key', e.target.value)}
+                                            placeholder={apiPlaceholder}
+                                            className="w-full bg-[#f5f5f7] dark:bg-[#2c2c2e] border-0 rounded-xl px-4 py-3 text-[14px] text-[#1d1d1f] dark:text-[#f5f5f7] focus:outline-none focus:ring-2 focus:ring-[#0066cc]/30 placeholder-[#86868b] font-mono"
+                                        />
+                                    </div>
+                                )}
+
+                                {/* API Key (non-302ai, non-default Gemini) */}
+                                {settings.provider !== '302ai' && !isDefaultGemini && (
+                                    <div className="space-y-1.5">
+                                        <label className="text-[12px] font-medium text-[#86868b] uppercase tracking-wide">API Key</label>
                                         <input
                                             type="password"
                                             value={settings.apiKey}
@@ -144,9 +157,7 @@ export default function TranslateSettingsModal({ isOpen, onClose }: Props) {
                                 {/* Base URL (custom only) */}
                                 {settings.provider === 'openai-compatible' && (
                                     <div className="space-y-1.5">
-                                        <label className="text-[12px] font-medium text-[#86868b] uppercase tracking-wide">
-                                            Base URL
-                                        </label>
+                                        <label className="text-[12px] font-medium text-[#86868b] uppercase tracking-wide">Base URL</label>
                                         <input
                                             value={settings.baseUrl}
                                             onChange={e => up('baseUrl', e.target.value)}
@@ -183,7 +194,7 @@ export default function TranslateSettingsModal({ isOpen, onClose }: Props) {
                                                     onClick={() => up('customPrompt', '')}
                                                     className="text-[12px] text-[#86868b] hover:text-[#ff3b30] transition-colors"
                                                 >
-                                                    Xóa custom prompt → về mặc định
+                                                    Xóa → về prompt mặc định
                                                 </button>
                                             )}
                                         </div>
@@ -193,7 +204,7 @@ export default function TranslateSettingsModal({ isOpen, onClose }: Props) {
                                 {/* Provider badge */}
                                 <p className="text-[11px] text-[#86868b]">
                                     Provider: <span className="font-mono text-[#1d1d1f] dark:text-[#f5f5f7]">{PROVIDER_LABELS[settings.provider]}</span>
-                                    {isDefault && <span className="ml-2 text-[#34c759]">• dùng API key tích hợp sẵn</span>}
+                                    {isDefaultGemini && <span className="ml-2 text-[#34c759]">• dùng API key tích hợp sẵn</span>}
                                 </p>
                             </div>
 

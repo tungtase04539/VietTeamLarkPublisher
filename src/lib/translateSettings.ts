@@ -1,12 +1,13 @@
 const STORAGE_KEY = 'raphael_translate_settings';
 
-export type ModelProvider = 'gemini' | 'openai' | 'anthropic' | 'openai-compatible';
+export type ModelProvider = 'gemini' | 'openai' | 'anthropic' | '302ai' | 'openai-compatible';
 
 export interface TranslateSettings {
     provider: ModelProvider;
-    model: string;          // e.g. "gemini-2.5-flash", "gpt-4o", "claude-3-5-sonnet-20241022"
+    model: string;
     apiKey: string;
-    baseUrl: string;        // for openai-compatible custom endpoints
+    ai302Key: string;       // separate field for 302.ai key
+    baseUrl: string;        // for custom endpoints
     customPrompt: string;   // empty = use default
 }
 
@@ -24,23 +25,52 @@ STRICT RULES — you MUST follow all of these exactly:
 9. Do NOT change the number of lines. Every input line maps to one output line.
 10. HTML tags like <br>, <span>, <p> must be kept exactly as-is.`;
 
-export const PRESET_MODELS: { provider: ModelProvider; label: string; model: string; placeholder: string }[] = [
-    { provider: 'gemini',    label: 'Gemini 2.5 Flash (mặc định)', model: 'gemini-2.5-flash', placeholder: 'AIza...' },
-    { provider: 'gemini',    label: 'Gemini 2.0 Flash', model: 'gemini-2.0-flash', placeholder: 'AIza...' },
-    { provider: 'gemini',    label: 'Gemini 1.5 Pro', model: 'gemini-1.5-pro', placeholder: 'AIza...' },
-    { provider: 'openai',    label: 'GPT-4o', model: 'gpt-4o', placeholder: 'sk-...' },
-    { provider: 'openai',    label: 'GPT-4o Mini', model: 'gpt-4o-mini', placeholder: 'sk-...' },
-    { provider: 'openai',    label: 'GPT-4 Turbo', model: 'gpt-4-turbo', placeholder: 'sk-...' },
-    { provider: 'anthropic', label: 'Claude 3.5 Sonnet', model: 'claude-3-5-sonnet-20241022', placeholder: 'sk-ant-...' },
-    { provider: 'anthropic', label: 'Claude 3.5 Haiku', model: 'claude-3-5-haiku-20241022', placeholder: 'sk-ant-...' },
-    { provider: 'anthropic', label: 'Claude 3 Opus', model: 'claude-3-opus-20240229', placeholder: 'sk-ant-...' },
-    { provider: 'openai-compatible', label: 'Custom (OpenAI-compatible)', model: '', placeholder: 'API Key' },
+export const AI302_BASE_URL = 'https://api.302.ai/v1';
+
+export interface PresetModel {
+    provider: ModelProvider;
+    label: string;
+    model: string;
+    placeholder: string;
+    group: string;
+}
+
+export const PRESET_MODELS: PresetModel[] = [
+    // ── Mặc định ────────────────────────────────────────────
+    { group: '🌟 Mặc định',   provider: 'gemini',    label: 'Gemini 2.5 Flash (mặc định, miễn phí)', model: 'gemini-2.5-flash',            placeholder: 'AIza... (để trống = dùng key tích hợp)' },
+
+    // ── 302.ai — 1 key dùng được tất cả ────────────────────
+    { group: '🔥 302.ai',     provider: '302ai',      label: 'Claude 3.5 Sonnet',                      model: 'claude-3-5-sonnet-20241022',   placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai',     provider: '302ai',      label: 'Claude 3.5 Haiku (nhanh, rẻ)',           model: 'claude-3-5-haiku-20241022',    placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai',     provider: '302ai',      label: 'GPT-4o',                                 model: 'gpt-4o',                       placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai',     provider: '302ai',      label: 'GPT-4o Mini (nhanh, rẻ)',                model: 'gpt-4o-mini',                  placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai',     provider: '302ai',      label: 'Gemini 2.5 Pro',                         model: 'gemini-2.5-pro',               placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai',     provider: '302ai',      label: 'Gemini 2.5 Flash',                       model: 'gemini-2.5-flash',             placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai',     provider: '302ai',      label: 'DeepSeek V3',                            model: 'deepseek-v3',                  placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai',     provider: '302ai',      label: 'DeepSeek R1 (reasoning)',                model: 'deepseek-r1',                  placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai',     provider: '302ai',      label: 'Grok 3',                                 model: 'grok-3',                       placeholder: 'sk-0POS...' },
+
+    // ── Gemini direct ───────────────────────────────────────
+    { group: '🔵 Gemini',     provider: 'gemini',    label: 'Gemini 2.0 Flash',                       model: 'gemini-2.0-flash',             placeholder: 'AIza...' },
+    { group: '🔵 Gemini',     provider: 'gemini',    label: 'Gemini 1.5 Pro',                         model: 'gemini-1.5-pro',               placeholder: 'AIza...' },
+
+    // ── OpenAI direct ───────────────────────────────────────
+    { group: '🟢 OpenAI',     provider: 'openai',    label: 'GPT-4o',                                 model: 'gpt-4o',                       placeholder: 'sk-...' },
+    { group: '🟢 OpenAI',     provider: 'openai',    label: 'GPT-4o Mini',                            model: 'gpt-4o-mini',                  placeholder: 'sk-...' },
+
+    // ── Anthropic direct ────────────────────────────────────
+    { group: '🟠 Claude',     provider: 'anthropic', label: 'Claude 3.5 Sonnet',                      model: 'claude-3-5-sonnet-20241022',   placeholder: 'sk-ant-...' },
+    { group: '🟠 Claude',     provider: 'anthropic', label: 'Claude 3.5 Haiku',                       model: 'claude-3-5-haiku-20241022',    placeholder: 'sk-ant-...' },
+
+    // ── Custom ──────────────────────────────────────────────
+    { group: '⚙️ Custom',     provider: 'openai-compatible', label: 'Custom (OpenAI-compatible)',     model: '',                             placeholder: 'API Key' },
 ];
 
 export const DEFAULT_SETTINGS: TranslateSettings = {
     provider: 'gemini',
     model: 'gemini-2.5-flash',
-    apiKey: '',   // will use built-in key if empty for gemini
+    apiKey: '',
+    ai302Key: '',
     baseUrl: 'https://api.openai.com/v1',
     customPrompt: '',
 };
