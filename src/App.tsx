@@ -12,6 +12,7 @@ import EditorPanel from './components/EditorPanel';
 import PreviewPanel from './components/PreviewPanel';
 import LarkPublishDialog from './components/LarkPublishDialog';
 import TranslateSettingsModal from './components/TranslateSettingsModal';
+import UsageStatsPanel from './components/UsageStatsPanel';
 
 export default function App() {
     const [themeMode, setThemeMode] = useState<'light' | 'dark'>('light');
@@ -27,6 +28,7 @@ export default function App() {
     const [translateProgress, setTranslateProgress] = useState<{ current: number; total: number } | null>(null);
     const [isPublishOpen, setIsPublishOpen] = useState(false);
     const [isTranslateSettingsOpen, setIsTranslateSettingsOpen] = useState(false);
+    const [isUsageOpen, setIsUsageOpen] = useState(false);
     const previewRef = useRef<HTMLDivElement>(null);
     const editorScrollRef = useRef<HTMLTextAreaElement>(null);
     const previewOuterScrollRef = useRef<HTMLDivElement>(null);
@@ -200,6 +202,7 @@ export default function App() {
                     translateProgress={translateProgress}
                     onPublishLark={() => setIsPublishOpen(true)}
                     onOpenTranslateSettings={() => setIsTranslateSettingsOpen(true)}
+                    onOpenUsage={() => setIsUsageOpen(true)}
                 />
             </div>
 
@@ -215,6 +218,7 @@ export default function App() {
                     translateProgress={translateProgress}
                     onPublishLark={() => setIsPublishOpen(true)}
                     onOpenTranslateSettings={() => setIsTranslateSettingsOpen(true)}
+                    onOpenUsage={() => setIsUsageOpen(true)}
                 />
             </div>
 
@@ -256,6 +260,10 @@ export default function App() {
         <TranslateSettingsModal
             isOpen={isTranslateSettingsOpen}
             onClose={() => setIsTranslateSettingsOpen(false)}
+        />
+        <UsageStatsPanel
+            isOpen={isUsageOpen}
+            onClose={() => setIsUsageOpen(false)}
         />
         </>
     );

@@ -1,4 +1,4 @@
-import { CheckCircle2, Loader2, Languages, Upload, Settings2 } from 'lucide-react';
+import { CheckCircle2, Loader2, Languages, Upload, Settings2, BarChart2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface ToolbarProps {
@@ -8,9 +8,10 @@ interface ToolbarProps {
     translateProgress: { current: number; total: number } | null;
     onPublishLark: () => void;
     onOpenTranslateSettings: () => void;
+    onOpenUsage: () => void;
 }
 
-export default function Toolbar({ onTranslate, isTranslating, translateDone, translateProgress, onPublishLark, onOpenTranslateSettings }: ToolbarProps) {
+export default function Toolbar({ onTranslate, isTranslating, translateDone, translateProgress, onPublishLark, onOpenTranslateSettings, onOpenUsage }: ToolbarProps) {
     return (
         <div className="flex items-center justify-end px-4 sm:px-6 py-3 max-w-[1024px]">
             <div className="flex items-center gap-2 sm:gap-4">
@@ -21,6 +22,15 @@ export default function Toolbar({ onTranslate, isTranslating, translateDone, tra
                     className="p-2 rounded-full text-[#86868b] dark:text-[#a1a1a6] hover:text-[#0066cc] dark:hover:text-[#0a84ff] hover:bg-[#0066cc]/10 dark:hover:bg-[#0a84ff]/10 transition-all"
                 >
                     <Settings2 size={14} />
+                </button>
+
+                {/* Usage stats */}
+                <button
+                    onClick={onOpenUsage}
+                    title="Thống kê chi tiêu dịch"
+                    className="p-2 rounded-full text-[#86868b] dark:text-[#a1a1a6] hover:text-[#0066cc] dark:hover:text-[#0a84ff] hover:bg-[#0066cc]/10 dark:hover:bg-[#0a84ff]/10 transition-all"
+                >
+                    <BarChart2 size={14} />
                 </button>
 
                 {/* Translate to Vietnamese button */}

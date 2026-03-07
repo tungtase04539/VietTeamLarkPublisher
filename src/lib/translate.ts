@@ -1,4 +1,5 @@
-import { loadTranslateSettings, DEFAULT_PROMPT } from './translateSettings';
+import { loadTranslateSettings, DEFAULT_PROMPT, appendUsageRecord, getActivePreset } from './translateSettings';
+
 
 const BUILT_IN_GEMINI_KEY = "AIzaSyCR6zeN6db7CouFl7Xm0hQiuTlJvwL63Ug";
 
@@ -153,5 +154,24 @@ export async function translateMarkdown(
         translatedChunks.push(cleaned);
     }
     const joined = translatedChunks.join('\n\n');
-    return restoreCodeBlocks(joined, codeMap);
+    const result = restoreCodeBlocks(joined, codeMap);
+
+    // ── Track usage ──────────────────────────────────────────────
+    try {
+        const preset = getActivePreset();
+        const inputTokens = Math.round(content.length / 4);
+        const outputTokens = Math.round(result.length / 4);
+        const costUsd = (inputTokens * preset.priceIn + outputTokens * preset.priceOut) / 1_000_000;
+        appendUsageRecord({
+            date: new Date().toISOString(),
+            model: preset.model || 'custom',
+            modelLabel: preset.label,
+            inputTokens,
+            outputTokens,
+            costUsd,
+        });
+    } catch { /* ignore tracking errors */ }
+
+    return result;
 }
+
