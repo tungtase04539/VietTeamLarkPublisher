@@ -141,18 +141,25 @@ function splitIntoChunks(content: string, maxChunkSize = 3000): string[] {
 // ── Main export ───────────────────────────────────────────────────
 export async function translateMarkdown(
     content: string,
-    onProgress?: (current: number, total: number) => void,
+    onProgress?: (current: number, total: number, chunkMs?: number) => void,
 ): Promise<string> {
     if (!content.trim()) return content;
     const { protected: protectedContent, map: codeMap } = protectCodeBlocks(content);
     const chunks = splitIntoChunks(protectedContent);
     const translatedChunks: string[] = [];
+    const startTotal = Date.now();
+
     for (let i = 0; i < chunks.length; i++) {
+        const startChunk = Date.now();
         onProgress?.(i + 1, chunks.length);
         const translated = await callTranslateAPI(chunks[i]);
+        const chunkMs = Date.now() - startChunk;
         const cleaned = translated.replace(/^```(?:markdown)?\n?/, '').replace(/\n?```$/, '');
         translatedChunks.push(cleaned);
+        onProgress?.(i + 1, chunks.length, chunkMs);
     }
+
+    const durationMs = Date.now() - startTotal;
     const joined = translatedChunks.join('\n\n');
     const result = restoreCodeBlocks(joined, codeMap);
 
@@ -169,9 +176,12 @@ export async function translateMarkdown(
             inputTokens,
             outputTokens,
             costUsd,
+            durationMs,
+            chunks: chunks.length,
         });
     } catch { /* ignore tracking errors */ }
 
     return result;
 }
+
 

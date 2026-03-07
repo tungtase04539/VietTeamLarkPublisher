@@ -21,6 +21,13 @@ function formatCostNum(usd: number) {
     return usd < 0.001 ? '<0.001' : usd.toFixed(4);
 }
 
+function formatMs(ms: number) {
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    return `${Math.floor(ms / 60000)}m${Math.round((ms % 60000) / 1000)}s`;
+}
+
+
 export default function UsageStatsPanel({ isOpen, onClose }: Props) {
     const [records, setRecords] = useState<UsageRecord[]>([]);
 
@@ -30,10 +37,11 @@ export default function UsageStatsPanel({ isOpen, onClose }: Props) {
     const totalSessions = records.length;
 
     // Group by model
-    const byModel = records.reduce<Record<string, { label: string; count: number; cost: number }>>((acc, r) => {
-        if (!acc[r.model]) acc[r.model] = { label: r.modelLabel, count: 0, cost: 0 };
+    const byModel = records.reduce<Record<string, { label: string; count: number; cost: number; totalMs: number }>>((acc, r) => {
+        if (!acc[r.model]) acc[r.model] = { label: r.modelLabel, count: 0, cost: 0, totalMs: 0 };
         acc[r.model].count += 1;
         acc[r.model].cost += r.costUsd;
+        acc[r.model].totalMs += r.durationMs ?? 0;
         return acc;
     }, {});
     const modelStats = Object.entries(byModel).sort((a, b) => b[1].cost - a[1].cost);
@@ -114,7 +122,9 @@ export default function UsageStatsPanel({ isOpen, onClose }: Props) {
                                                                     className="h-full bg-[#0066cc] dark:bg-[#0a84ff] rounded-full"
                                                                 />
                                                             </div>
-                                                            <p className="text-[10.5px] text-[#86868b] mt-0.5">{stat.count} lần dịch</p>
+                                                            <p className="text-[10.5px] text-[#86868b] mt-0.5">
+                                                            {stat.count} lần · TB {stat.totalMs > 0 ? formatMs(Math.round(stat.totalMs / stat.count)) : '—'}/lần
+                                                        </p>
                                                         </div>
                                                     </div>
                                                 );
@@ -136,7 +146,11 @@ export default function UsageStatsPanel({ isOpen, onClose }: Props) {
                                                     </div>
                                                     <div className="shrink-0 text-right">
                                                         <div className="text-[12px] font-mono">{formatCost(r.costUsd)}</div>
-                                                        <div className="text-[10px] text-[#86868b]">~{(r.inputTokens + r.outputTokens).toLocaleString()} tokens</div>
+                                                        <div className="text-[10px] text-[#86868b]">
+                                                            {r.durationMs ? formatMs(r.durationMs) : '—'}
+                                                            {r.chunks && r.chunks > 1 ? ` · ${r.chunks} chunk` : ''}
+                                                            {r.inputTokens ? ` · ~${((r.inputTokens + (r.outputTokens ?? 0))).toLocaleString()}t` : ''}
+                                                        </div>
                                                     </div>
                                                 </div>
                                             ))}

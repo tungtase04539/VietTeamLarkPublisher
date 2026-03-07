@@ -14,12 +14,14 @@ export interface TranslateSettings {
 
 // ── Usage tracking ───────────────────────────────────────────────
 export interface UsageRecord {
-    date: string;           // ISO date string
+    date: string;
     model: string;
     modelLabel: string;
-    inputTokens: number;    // estimated
-    outputTokens: number;   // estimated
-    costUsd: number;        // estimated
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+    durationMs: number;     // total translation duration in ms
+    chunks: number;         // number of chunks processed
 }
 
 export function loadUsageRecords(): UsageRecord[] {
