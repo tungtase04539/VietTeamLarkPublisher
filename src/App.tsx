@@ -1,26 +1,32 @@
 import { useEffect, useState, useRef } from 'react';
 import { PenLine, Eye } from 'lucide-react';
-import html2pdf from 'html2pdf.js';
 import { md, preprocessMarkdown, applyTheme } from './lib/markdown';
-import { makeWeChatCompatible } from './lib/wechatCompat';
 import { THEMES } from './lib/themes';
+
 import { defaultContent } from './defaultContent';
+import { translateMarkdown } from './lib/translate';
 import Header from './components/Header';
 import ThemeSelector from './components/ThemeSelector';
 import Toolbar from './components/Toolbar';
 import EditorPanel from './components/EditorPanel';
 import PreviewPanel from './components/PreviewPanel';
+import LarkPublishDialog from './components/LarkPublishDialog';
+import TranslateSettingsModal from './components/TranslateSettingsModal';
 
 export default function App() {
     const [themeMode, setThemeMode] = useState<'light' | 'dark'>('light');
     const [markdownInput, setMarkdownInput] = useState<string>(defaultContent);
     const [renderedHtml, setRenderedHtml] = useState<string>('');
     const [activeTheme, setActiveTheme] = useState(THEMES[0].id);
-    const [copied, setCopied] = useState(false);
-    const [isCopying, setIsCopying] = useState(false);
-    const [previewDevice, setPreviewDevice] = useState<'mobile' | 'tablet' | 'pc'>('pc');
+
+    const previewDevice = 'pc' as const;
     const [activePanel, setActivePanel] = useState<'editor' | 'preview'>('editor');
-    const [scrollSyncEnabled, setScrollSyncEnabled] = useState(true);
+    const scrollSyncEnabled = true;
+    const [isTranslating, setIsTranslating] = useState(false);
+    const [translateDone, setTranslateDone] = useState(false);
+    const [translateProgress, setTranslateProgress] = useState<{ current: number; total: number } | null>(null);
+    const [isPublishOpen, setIsPublishOpen] = useState(false);
+    const [isTranslateSettingsOpen, setIsTranslateSettingsOpen] = useState(false);
     const previewRef = useRef<HTMLDivElement>(null);
     const editorScrollRef = useRef<HTMLTextAreaElement>(null);
     const previewOuterScrollRef = useRef<HTMLDivElement>(null);
@@ -132,75 +138,36 @@ export default function App() {
         syncScrollPosition(previewElement, editorElement, 'preview');
     };
 
-    const handleCopy = async () => {
-        if (!previewRef.current) return;
-        setIsCopying(true);
+
+    const handleTranslate = async () => {
+        if (isTranslating || !markdownInput.trim()) return;
+        setIsTranslating(true);
+        setTranslateDone(false);
+        setTranslateProgress(null);
         try {
-            const finalHtmlForCopy = await makeWeChatCompatible(renderedHtml, activeTheme);
-
-            const blob = new Blob([finalHtmlForCopy], { type: 'text/html' });
-            const textBlob = new Blob([previewRef.current.innerText], { type: 'text/plain' });
-
-            const clipboardItem = new ClipboardItem({
-                'text/html': blob,
-                'text/plain': textBlob
-            });
-            await navigator.clipboard.write([clipboardItem]);
-
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
+            const result = await translateMarkdown(
+                markdownInput,
+                (current, total) => setTranslateProgress({ current, total })
+            );
+            setMarkdownInput(result);
+            setTranslateDone(true);
+            setTimeout(() => setTranslateDone(false), 2500);
         } catch (err) {
-            console.error('Copy failed', err);
-            alert('复制格式失败，请检查浏览器剪贴板权限');
+            console.error('Translation failed:', err);
+            alert(`Dịch thất bại: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
-            setIsCopying(false);
+            setIsTranslating(false);
+            setTranslateProgress(null);
         }
     };
 
-    const handleExportHtml = () => {
-        const blob = new Blob([renderedHtml], { type: 'text/html;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `Raphael_Article_${new Date().getTime()}.html`;
-        a.click();
-        URL.revokeObjectURL(url);
-    };
 
-    const handleExportPdf = () => {
-        if (!previewRef.current) return;
-        const element = previewRef.current;
-        const opt = {
-            margin: 10,
-            filename: `Raphael_Article_${new Date().getTime()}.pdf`,
-            image: { type: 'jpeg' as const, quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true, letterRendering: true, backgroundColor: document.documentElement.classList.contains('dark') ? '#000000' : '#ffffff' },
-            jsPDF: { unit: 'mm' as const, format: 'a4', orientation: 'portrait' as const }
-        };
-        const clonedElement = element.cloneNode(true) as HTMLElement;
-        const cloneContainer = document.createElement('div');
-        cloneContainer.style.background = document.documentElement.classList.contains('dark') ? '#000000' : '#ffffff';
-        cloneContainer.appendChild(clonedElement);
 
-        document.body.appendChild(cloneContainer);
-        html2pdf().set(opt).from(cloneContainer).save().then(() => {
-            document.body.removeChild(cloneContainer);
-        });
-    };
-
-    const deviceWidthClass = () => {
-        if (previewDevice === 'mobile') return 'w-[520px] max-w-full';
-        if (previewDevice === 'tablet') return 'w-[800px] max-w-full';
-        return 'w-[840px] xl:w-[1024px] max-w-[95%]';
-    };
-
-    const gridLayoutClass = () => {
-        if (previewDevice === 'mobile') return 'md:grid-cols-[55fr_45fr]';
-        if (previewDevice === 'tablet') return 'md:grid-cols-[45fr_55fr]';
-        return 'md:grid-cols-[38.2fr_61.8fr]';
-    };
+    const deviceWidthClass = () => 'w-[840px] xl:w-[1024px] max-w-[95%]';
+    const gridLayoutClass = () => 'md:grid-cols-[38.2fr_61.8fr]';
 
     return (
+        <>
         <div className="flex flex-col h-screen overflow-hidden antialiased bg-[#fbfbfd] dark:bg-black transition-colors duration-300">
 
             <Header themeMode={themeMode} onToggleTheme={toggleTheme} />
@@ -227,15 +194,12 @@ export default function App() {
             <div className={`glass-toolbar hidden md:grid grid-cols-1 ${gridLayoutClass()} px-0 z-[90] transition-all duration-500`}>
                 <ThemeSelector activeTheme={activeTheme} onThemeChange={setActiveTheme} />
                 <Toolbar
-                    previewDevice={previewDevice}
-                    onDeviceChange={setPreviewDevice}
-                    onExportPdf={handleExportPdf}
-                    onExportHtml={handleExportHtml}
-                    onCopy={handleCopy}
-                    copied={copied}
-                    isCopying={isCopying}
-                    scrollSyncEnabled={scrollSyncEnabled}
-                    onToggleScrollSync={() => setScrollSyncEnabled((prev) => !prev)}
+                    onTranslate={handleTranslate}
+                    isTranslating={isTranslating}
+                    translateDone={translateDone}
+                    translateProgress={translateProgress}
+                    onPublishLark={() => setIsPublishOpen(true)}
+                    onOpenTranslateSettings={() => setIsTranslateSettingsOpen(true)}
                 />
             </div>
 
@@ -245,15 +209,12 @@ export default function App() {
                     <ThemeSelector activeTheme={activeTheme} onThemeChange={setActiveTheme} />
                 </div>
                 <Toolbar
-                    previewDevice={previewDevice}
-                    onDeviceChange={setPreviewDevice}
-                    onExportPdf={handleExportPdf}
-                    onExportHtml={handleExportHtml}
-                    onCopy={handleCopy}
-                    copied={copied}
-                    isCopying={isCopying}
-                    scrollSyncEnabled={scrollSyncEnabled}
-                    onToggleScrollSync={() => setScrollSyncEnabled((prev) => !prev)}
+                    onTranslate={handleTranslate}
+                    isTranslating={isTranslating}
+                    translateDone={translateDone}
+                    translateProgress={translateProgress}
+                    onPublishLark={() => setIsPublishOpen(true)}
+                    onOpenTranslateSettings={() => setIsTranslateSettingsOpen(true)}
                 />
             </div>
 
@@ -284,5 +245,18 @@ export default function App() {
             </main>
 
         </div>
+
+        {/* Lark Publish Dialog */}
+        <LarkPublishDialog
+            isOpen={isPublishOpen}
+            onClose={() => setIsPublishOpen(false)}
+            markdownInput={markdownInput}
+            activeTheme={activeTheme}
+        />
+        <TranslateSettingsModal
+            isOpen={isTranslateSettingsOpen}
+            onClose={() => setIsTranslateSettingsOpen(false)}
+        />
+        </>
     );
 }

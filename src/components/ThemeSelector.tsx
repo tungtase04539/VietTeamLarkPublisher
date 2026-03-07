@@ -59,7 +59,7 @@ export default function ThemeSelector({ activeTheme, onThemeChange }: ThemeSelec
 
     return (
         <div className="flex items-center flex-wrap gap-2 lg:gap-4 px-4 lg:px-6 py-3 border-r border-transparent md:border-[#00000015] md:dark:border-[#ffffff15] shrink-0">
-            <span className="text-[12px] font-semibold text-[#86868b] uppercase tracking-widest hidden xl:block shrink-0">排版风格</span>
+            <span className="text-[12px] font-semibold text-[#86868b] uppercase tracking-widest hidden xl:block shrink-0">Phong cách</span>
 
             <div className="flex items-center gap-1.5 bg-[#00000008] dark:bg-[#ffffff10] p-1 rounded-full backdrop-blur-md shrink-0">
                 {pillThemes.map(theme => (
@@ -81,7 +81,7 @@ export default function ThemeSelector({ activeTheme, onThemeChange }: ThemeSelec
                     onClick={() => setIsThemeOpen(!isThemeOpen)}
                     className={`apple-export-btn flex items-center gap-2 !px-4 !py-1.5 !text-[13px] transition-all ${isInDropdown ? 'bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] border-[#00000010] dark:border-[#ffffff10] shadow-sm' : 'border-transparent bg-transparent hover:bg-transparent dark:bg-transparent text-[#86868b] dark:text-[#a1a1a6] shadow-none hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7]'}`}
                 >
-                    {isInDropdown ? selectedThemeName : `全部 ${THEMES.length} 款`}
+                    {isInDropdown ? selectedThemeName : `Tất cả (${THEMES.length} phối)`}
                     <ChevronDown size={14} className={`transition-transform duration-300 ${isThemeOpen ? 'rotate-180' : ''}`} />
                 </button>
 
@@ -107,7 +107,7 @@ export default function ThemeSelector({ activeTheme, onThemeChange }: ThemeSelec
                             >
                                 {/* Header */}
                                 <div className="flex items-center justify-between px-5 pt-4 pb-2">
-                                    <span className="text-[15px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">选择排版风格 · {THEMES.length} 款</span>
+                                    <span className="text-[15px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Chọn phong cách · {THEMES.length} mẫu</span>
                                     <button
                                         onClick={() => setIsThemeOpen(false)}
                                         className="p-1 rounded-full hover:bg-[#00000008] dark:hover:bg-[#ffffff10] transition-colors"
@@ -127,7 +127,7 @@ export default function ThemeSelector({ activeTheme, onThemeChange }: ThemeSelec
                                         <div key={group.label}>
                                             <div className={`flex items-center gap-2 ${groupIdx > 0 ? 'mt-4 pt-4 border-t border-[#00000010] dark:border-[#ffffff10]' : 'mt-1'}`}>
                                                 <span className="text-[12px] font-semibold text-[#86868b] dark:text-[#a1a1a6] uppercase tracking-widest">{group.label}</span>
-                                                <span className="text-[11px] text-[#b0b0b5] dark:text-[#666]">{group.themes.length} 款</span>
+                                                <span className="text-[11px] text-[#b0b0b5] dark:text-[#666]">{group.themes.length} mẫu</span>
                                             </div>
                                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
                                                 {group.themes.map(theme => (

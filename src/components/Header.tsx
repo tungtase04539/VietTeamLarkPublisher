@@ -17,7 +17,7 @@ export default function Header({ themeMode, onToggleTheme }: HeaderProps) {
                         <path d="M4 11.5H8.5" strokeWidth="2.5" strokeLinecap="round" stroke="currentColor" className="text-white dark:text-black" />
                     </svg>
                 </div>
-                <span className="font-bold text-lg tracking-tight text-black dark:text-white">Raphael Publish<span className="hidden sm:inline"> - 公众号排版大师</span></span>
+                <span className="font-bold text-lg tracking-tight text-black dark:text-white">Raphael Publish<span className="hidden sm:inline"> · Công cụ soạn thảo & xuất bản nội dung</span></span>
             </div>
 
             <div className="flex items-center gap-4">

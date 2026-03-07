@@ -1,88 +1,75 @@
-import { Copy, CheckCircle2, Download, Smartphone, Tablet, Monitor, Loader2, Link2, Unlink2 } from 'lucide-react';
+import { CheckCircle2, Loader2, Languages, Upload, Settings2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface ToolbarProps {
-    previewDevice: 'mobile' | 'tablet' | 'pc';
-    onDeviceChange: (device: 'mobile' | 'tablet' | 'pc') => void;
-    onExportPdf: () => void;
-    onExportHtml: () => void;
-    onCopy: () => void;
-    copied: boolean;
-    isCopying: boolean;
-    scrollSyncEnabled: boolean;
-    onToggleScrollSync: () => void;
+    onTranslate: () => void;
+    isTranslating: boolean;
+    translateDone: boolean;
+    translateProgress: { current: number; total: number } | null;
+    onPublishLark: () => void;
+    onOpenTranslateSettings: () => void;
 }
 
-export default function Toolbar({ previewDevice, onDeviceChange, onExportPdf, onExportHtml, onCopy, copied, isCopying, scrollSyncEnabled, onToggleScrollSync }: ToolbarProps) {
+export default function Toolbar({ onTranslate, isTranslating, translateDone, translateProgress, onPublishLark, onOpenTranslateSettings }: ToolbarProps) {
     return (
-        <div className="flex items-center justify-between px-4 sm:px-6 py-3 max-w-[1024px]">
-            <div className="hidden md:flex bg-[#00000008] dark:bg-[#ffffff10] p-1 rounded-full backdrop-blur-md">
+        <div className="flex items-center justify-end px-4 sm:px-6 py-3 max-w-[1024px]">
+            <div className="flex items-center gap-2 sm:gap-4">
+                {/* Translate settings gear */}
                 <button
-                    onClick={() => onDeviceChange('mobile')}
-                    className={`p-2 rounded-full transition-all ${previewDevice === 'mobile' ? 'bg-white dark:bg-[#2c2c2e] shadow-sm' : 'text-[#86868b] dark:text-[#a1a1a6] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7]'}`}
-                    title="手机视图 (480px)"
+                    onClick={onOpenTranslateSettings}
+                    title="Cài đặt model dịch"
+                    className="p-2 rounded-full text-[#86868b] dark:text-[#a1a1a6] hover:text-[#0066cc] dark:hover:text-[#0a84ff] hover:bg-[#0066cc]/10 dark:hover:bg-[#0a84ff]/10 transition-all"
                 >
-                    <Smartphone size={16} />
+                    <Settings2 size={14} />
                 </button>
-                <button
-                    onClick={() => onDeviceChange('tablet')}
-                    className={`p-2 rounded-full transition-all ${previewDevice === 'tablet' ? 'bg-white dark:bg-[#2c2c2e] shadow-sm' : 'text-[#86868b] dark:text-[#a1a1a6] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7]'}`}
-                    title="平板视图 (768px)"
-                >
-                    <Tablet size={16} />
-                </button>
-                <button
-                    onClick={() => onDeviceChange('pc')}
-                    className={`p-2 rounded-full transition-all ${previewDevice === 'pc' ? 'bg-white dark:bg-[#2c2c2e] shadow-sm' : 'text-[#86868b] dark:text-[#a1a1a6] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7]'}`}
-                    title="桌面视图 (PC)"
-                >
-                    <Monitor size={16} />
-                </button>
-            </div>
 
-            <div className="flex items-center gap-4">
+                {/* Translate to Vietnamese button */}
                 <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.96 }}
-                    onClick={onToggleScrollSync}
-                    className={`apple-export-btn !bg-[#00000008] dark:!bg-[#ffffff10] border-transparent ${scrollSyncEnabled ? 'text-[#0066cc] dark:text-[#0a84ff]' : 'text-[#86868b] dark:text-[#a1a1a6]'}`}
-                    title={scrollSyncEnabled ? '关闭滚动同步' : '开启滚动同步'}
+                    whileHover={!isTranslating ? { scale: 1.02 } : {}}
+                    whileTap={!isTranslating ? { scale: 0.96 } : {}}
+                    onClick={onTranslate}
+                    disabled={isTranslating}
+                    title="Dịch nội dung sang Tiếng Việt (giữ nguyên cấu trúc Markdown)"
+                    className={`apple-export-btn border-transparent transition-all ${
+                        translateDone
+                            ? '!bg-[#34c759]/15 dark:!bg-[#30d158]/15 !text-[#1d8d3a] dark:!text-[#30d158] border-[#34c759]/30'
+                            : isTranslating
+                                ? '!bg-[#0066cc]/10 dark:!bg-[#0a84ff]/10 !text-[#0066cc] dark:!text-[#0a84ff] border-[#0066cc]/20 cursor-not-allowed opacity-90'
+                                : '!bg-[#00000008] dark:!bg-[#ffffff10] hover:!bg-[#0066cc]/10 dark:hover:!bg-[#0a84ff]/10 hover:!text-[#0066cc] dark:hover:!text-[#0a84ff]'
+                    }`}
                 >
-                    {scrollSyncEnabled ? <Link2 size={14} /> : <Unlink2 size={14} />}
-                    <span className="hidden sm:inline">{scrollSyncEnabled ? '滚动同步开' : '滚动同步关'}</span>
-                    <span className="sm:hidden">{scrollSyncEnabled ? '同步开' : '同步关'}</span>
+                    {translateDone ? (
+                        <CheckCircle2 size={14} />
+                    ) : isTranslating ? (
+                        <Loader2 className="animate-spin" size={14} />
+                    ) : (
+                        <Languages size={14} />
+                    )}
+                    <span className="hidden sm:inline">
+                        {translateDone
+                            ? 'Đã dịch!'
+                            : isTranslating
+                                ? translateProgress
+                                    ? `Đang dịch ${translateProgress.current}/${translateProgress.total}...`
+                                    : 'Đang dịch...'
+                                : 'Dịch Việt'}
+                    </span>
+                    <span className="sm:hidden">
+                        {translateDone ? 'Xong!' : isTranslating ? '...' : 'Dịch'}
+                    </span>
                 </motion.button>
 
+                {/* Publish to Lark button */}
                 <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.96 }}
-                    onClick={onExportPdf}
-                    className="apple-export-btn !hidden sm:!flex !bg-[#00000008] dark:!bg-[#ffffff10] border-transparent"
+                    onClick={onPublishLark}
+                    title="Đăng nội dung lên Lark (Feishu)"
+                    className="apple-export-btn !bg-[#1456f0]/8 dark:!bg-[#3b82f6]/10 !text-[#1456f0] dark:!text-[#60a5fa] border-transparent hover:!bg-[#1456f0]/15 dark:hover:!bg-[#3b82f6]/20 transition-all"
                 >
-                    <Download size={14} />
-                    导出 PDF
-                </motion.button>
-
-                <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.96 }}
-                    onClick={onExportHtml}
-                    className="apple-export-btn !hidden lg:!flex !bg-[#00000008] dark:!bg-[#ffffff10] border-transparent"
-                >
-                    <Download size={14} />
-                    导出 HTML
-                </motion.button>
-
-                <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.96 }}
-                    onClick={onCopy}
-                    disabled={isCopying}
-                    className={copied ? "apple-copy-btn-success apple-copy-btn" : isCopying ? "apple-copy-btn opacity-80 cursor-not-allowed" : "apple-copy-btn"}
-                >
-                    {copied ? <CheckCircle2 size={16} /> : isCopying ? <Loader2 className="animate-spin" size={16} /> : <Copy size={16} />}
-                    <span className="hidden sm:inline">{copied ? '已复制！请贴往公众号' : isCopying ? '正在打包图片...' : '复制到公众号'}</span>
-                    <span className="sm:hidden">{copied ? '已复制' : isCopying ? '打包中...' : '复制'}</span>
+                    <Upload size={14} />
+                    <span className="hidden sm:inline">Đăng Lark</span>
+                    <span className="sm:hidden">Lark</span>
                 </motion.button>
             </div>
         </div>
