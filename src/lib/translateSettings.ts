@@ -37,34 +37,46 @@ export interface PresetModel {
 
 export const PRESET_MODELS: PresetModel[] = [
     // ── Mặc định ────────────────────────────────────────────
-    { group: '🌟 Mặc định',   provider: 'gemini',    label: 'Gemini 2.5 Flash (mặc định, miễn phí)', model: 'gemini-2.5-flash',            placeholder: 'AIza... (để trống = dùng key tích hợp)' },
+    { group: '🌟 Mặc định',   provider: 'gemini',    label: 'Gemini 2.5 Flash (mặc định, miễn phí)', model: 'gemini-2.5-flash',                placeholder: 'AIza... (để trống = dùng key tích hợp)' },
 
     // ── 302.ai — 1 key dùng được tất cả ────────────────────
-    { group: '🔥 302.ai',     provider: '302ai',      label: 'Claude 3.5 Sonnet',                      model: 'claude-3-5-sonnet-20241022',   placeholder: 'sk-0POS...' },
-    { group: '🔥 302.ai',     provider: '302ai',      label: 'Claude 3.5 Haiku (nhanh, rẻ)',           model: 'claude-3-5-haiku-20241022',    placeholder: 'sk-0POS...' },
-    { group: '🔥 302.ai',     provider: '302ai',      label: 'GPT-4o',                                 model: 'gpt-4o',                       placeholder: 'sk-0POS...' },
-    { group: '🔥 302.ai',     provider: '302ai',      label: 'GPT-4o Mini (nhanh, rẻ)',                model: 'gpt-4o-mini',                  placeholder: 'sk-0POS...' },
-    { group: '🔥 302.ai',     provider: '302ai',      label: 'Gemini 2.5 Pro',                         model: 'gemini-2.5-pro',               placeholder: 'sk-0POS...' },
-    { group: '🔥 302.ai',     provider: '302ai',      label: 'Gemini 2.5 Flash',                       model: 'gemini-2.5-flash',             placeholder: 'sk-0POS...' },
-    { group: '🔥 302.ai',     provider: '302ai',      label: 'DeepSeek V3',                            model: 'deepseek-v3',                  placeholder: 'sk-0POS...' },
-    { group: '🔥 302.ai',     provider: '302ai',      label: 'DeepSeek R1 (reasoning)',                model: 'deepseek-r1',                  placeholder: 'sk-0POS...' },
-    { group: '🔥 302.ai',     provider: '302ai',      label: 'Grok 3',                                 model: 'grok-3',                       placeholder: 'sk-0POS...' },
+    // Claude mới nhất
+    { group: '🔥 302.ai — Claude', provider: '302ai', label: 'Claude Opus 4.6 ★ (mạnh nhất, agentic)',  model: 'claude-opus-4-6',                 placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai — Claude', provider: '302ai', label: 'Claude Sonnet 4.6 (cân bằng tốt nhất)',   model: 'claude-sonnet-4-6',               placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai — Claude', provider: '302ai', label: 'Claude Haiku 4.5 (nhanh, rẻ)',            model: 'claude-haiku-4-5',                placeholder: 'sk-0POS...' },
+    // GPT mới nhất
+    { group: '🔥 302.ai — GPT',    provider: '302ai', label: 'GPT-5.4 ★ (mới nhất, reasoning cực mạnh)',model: 'gpt-5.4',                          placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai — GPT',    provider: '302ai', label: 'GPT-5.3 Instant (hội thoại tốt)',         model: 'gpt-5.3-instant',                 placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai — GPT',    provider: '302ai', label: 'GPT-4o (ổn định, đa năng)',               model: 'gpt-4o',                          placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai — GPT',    provider: '302ai', label: 'GPT-4o Mini (nhanh, rẻ)',                 model: 'gpt-4o-mini',                     placeholder: 'sk-0POS...' },
+    // Gemini mới nhất
+    { group: '🔥 302.ai — Gemini', provider: '302ai', label: 'Gemini 3.1 Pro ★ (77.1% ARC-AGI-2)',     model: 'gemini-3.1-pro',                  placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai — Gemini', provider: '302ai', label: 'Gemini 3.1 Flash Lite (siêu nhanh, rẻ)',  model: 'gemini-3.1-flash-lite-preview',   placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai — Gemini', provider: '302ai', label: 'Gemini 2.5 Pro (context 1M)',             model: 'gemini-2.5-pro',                  placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai — Gemini', provider: '302ai', label: 'Gemini 2.5 Flash (nhanh, rẻ)',            model: 'gemini-2.5-flash',                placeholder: 'sk-0POS...' },
+    // DeepSeek mới nhất
+    { group: '🔥 302.ai — DeepSeek', provider: '302ai', label: 'DeepSeek V4 ★ (multimodal, mới nhất)', model: 'deepseek-v4',                     placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai — DeepSeek', provider: '302ai', label: 'DeepSeek V3.2 (general, agentic)',      model: 'deepseek-v3',                     placeholder: 'sk-0POS...' },
+    { group: '🔥 302.ai — DeepSeek', provider: '302ai', label: 'DeepSeek R1 (reasoning, step-by-step)', model: 'deepseek-r1',                     placeholder: 'sk-0POS...' },
+    // Grok
+    { group: '🔥 302.ai — Grok',   provider: '302ai', label: 'Grok 3 (xAI, mới nhất)',                 model: 'grok-3',                          placeholder: 'sk-0POS...' },
 
     // ── Gemini direct ───────────────────────────────────────
-    { group: '🔵 Gemini',     provider: 'gemini',    label: 'Gemini 2.0 Flash',                       model: 'gemini-2.0-flash',             placeholder: 'AIza...' },
-    { group: '🔵 Gemini',     provider: 'gemini',    label: 'Gemini 1.5 Pro',                         model: 'gemini-1.5-pro',               placeholder: 'AIza...' },
+    { group: '🔵 Gemini direct',  provider: 'gemini',    label: 'Gemini 2.5 Pro',      model: 'gemini-2.5-pro',      placeholder: 'AIza...' },
+    { group: '🔵 Gemini direct',  provider: 'gemini',    label: 'Gemini 2.0 Flash',    model: 'gemini-2.0-flash',    placeholder: 'AIza...' },
 
     // ── OpenAI direct ───────────────────────────────────────
-    { group: '🟢 OpenAI',     provider: 'openai',    label: 'GPT-4o',                                 model: 'gpt-4o',                       placeholder: 'sk-...' },
-    { group: '🟢 OpenAI',     provider: 'openai',    label: 'GPT-4o Mini',                            model: 'gpt-4o-mini',                  placeholder: 'sk-...' },
+    { group: '🟢 OpenAI direct',  provider: 'openai',    label: 'GPT-4o',              model: 'gpt-4o',              placeholder: 'sk-...' },
+    { group: '🟢 OpenAI direct',  provider: 'openai',    label: 'GPT-4o Mini',         model: 'gpt-4o-mini',         placeholder: 'sk-...' },
 
     // ── Anthropic direct ────────────────────────────────────
-    { group: '🟠 Claude',     provider: 'anthropic', label: 'Claude 3.5 Sonnet',                      model: 'claude-3-5-sonnet-20241022',   placeholder: 'sk-ant-...' },
-    { group: '🟠 Claude',     provider: 'anthropic', label: 'Claude 3.5 Haiku',                       model: 'claude-3-5-haiku-20241022',    placeholder: 'sk-ant-...' },
+    { group: '🟠 Claude direct',  provider: 'anthropic', label: 'Claude Sonnet 4.6',   model: 'claude-sonnet-4-6',   placeholder: 'sk-ant-...' },
+    { group: '🟠 Claude direct',  provider: 'anthropic', label: 'Claude Haiku 4.5',    model: 'claude-haiku-4-5',    placeholder: 'sk-ant-...' },
 
     // ── Custom ──────────────────────────────────────────────
-    { group: '⚙️ Custom',     provider: 'openai-compatible', label: 'Custom (OpenAI-compatible)',     model: '',                             placeholder: 'API Key' },
+    { group: '⚙️ Custom',  provider: 'openai-compatible', label: 'Custom (OpenAI-compatible)', model: '', placeholder: 'API Key' },
 ];
+
 
 export const DEFAULT_SETTINGS: TranslateSettings = {
     provider: 'gemini',
