@@ -2,6 +2,8 @@ import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
 import { THEMES } from './themes';
+import { resolveImgRefs } from './imageStore';
+
 
 export const md = new MarkdownIt({
     html: true,
@@ -27,7 +29,11 @@ export const md = new MarkdownIt({
 
 // Avoid bold fragmentation when pasting from certain apps
 export function preprocessMarkdown(content: string) {
+    // Resolve internal img:// references to actual base64 data URLs
+    content = resolveImgRefs(content);
+
     content = content.replace(/^[ ]{0,3}(\*[ ]*\*[ ]*\*[\* ]*)[ \t]*$/gm, '***');
+
     content = content.replace(/^[ ]{0,3}(-[ ]*-[ ]*-[- ]*)[ \t]*$/gm, '---');
     content = content.replace(/^[ ]{0,3}(_[ ]*_[ ]*_[_ ]*)[ \t]*$/gm, '___');
     content = content.replace(/\*\*[ \t]+\*\*/g, ' ');
