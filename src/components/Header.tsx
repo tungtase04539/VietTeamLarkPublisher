@@ -1,12 +1,14 @@
-import { Moon, Sun, Github } from 'lucide-react';
+import { Moon, Sun, Github, LayoutGrid, SquarePen } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface HeaderProps {
     themeMode: 'light' | 'dark';
     onToggleTheme: () => void;
+    appMode: 'single' | 'multi';
+    onToggleMode: () => void;
 }
 
-export default function Header({ themeMode, onToggleTheme }: HeaderProps) {
+export default function Header({ themeMode, onToggleTheme, appMode, onToggleMode }: HeaderProps) {
     return (
         <header className="glass flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 sticky top-0 z-[100]">
             <div className="flex items-center gap-3">
@@ -20,7 +22,23 @@ export default function Header({ themeMode, onToggleTheme }: HeaderProps) {
                 <span className="font-bold text-lg tracking-tight text-black dark:text-white">Raphael Publish<span className="hidden sm:inline"> · Công cụ soạn thảo & xuất bản nội dung</span></span>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 sm:gap-4">
+                {/* Mode toggle */}
+                <motion.button
+                    whileHover={{ scale: 1.03 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={onToggleMode}
+                    title={appMode === 'single' ? 'Chuyển sang Multi Mode (lưới thẻ)' : 'Chuyển sang Single Mode (đơn)'}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12.5px] font-semibold transition-all ${
+                        appMode === 'multi'
+                            ? 'bg-[#0066cc] dark:bg-[#0a84ff] text-white shadow-sm'
+                            : 'bg-black/6 dark:bg-white/10 text-[#1d1d1f] dark:text-[#f5f5f7] hover:bg-black/10 dark:hover:bg-white/15'
+                    }`}
+                >
+                    {appMode === 'single' ? <LayoutGrid size={14} /> : <SquarePen size={14} />}
+                    <span className="hidden sm:inline">{appMode === 'single' ? 'Multi' : 'Single'}</span>
+                </motion.button>
+
                 <motion.a
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}

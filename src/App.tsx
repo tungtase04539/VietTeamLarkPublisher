@@ -13,8 +13,11 @@ import PreviewPanel from './components/PreviewPanel';
 import LarkPublishDialog from './components/LarkPublishDialog';
 import TranslateSettingsModal from './components/TranslateSettingsModal';
 import UsageStatsPanel from './components/UsageStatsPanel';
+import MultiDashboard from './components/MultiDashboard';
+import { useCardStore } from './lib/useCardStore';
 
 export default function App() {
+    const [appMode, setAppMode] = useState<'single' | 'multi'>('single');
     const [themeMode, setThemeMode] = useState<'light' | 'dark'>('light');
     const [markdownInput, setMarkdownInput] = useState<string>(defaultContent);
     const [renderedHtml, setRenderedHtml] = useState<string>('');
@@ -36,9 +39,8 @@ export default function App() {
     const scrollSyncLockRef = useRef<'editor' | 'preview' | null>(null);
     const scrollLockReleaseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    useEffect(() => {
-        // Enforce light mode as default, do not follow system preferences
-    }, []);
+    // Multi-mode card store
+    const { cards, addCard, removeCard, updateCard, duplicateCard } = useCardStore(THEMES[0].id);
 
     const toggleTheme = () => {
         setThemeMode((prev) => {
@@ -47,6 +49,18 @@ export default function App() {
             else document.documentElement.classList.remove('dark');
             return next;
         });
+    };
+
+    const toggleAppMode = () => {
+        setAppMode(prev => prev === 'single' ? 'multi' : 'single');
+    };
+
+    // Open a card in single mode
+    const handleOpenSingleFromCard = (cardMarkdown: string, cardTheme: string) => {
+        setMarkdownInput(cardMarkdown);
+        const themeExists = THEMES.find(t => t.id === cardTheme);
+        if (themeExists) setActiveTheme(cardTheme);
+        setAppMode('single');
     };
 
     useEffect(() => {
@@ -172,85 +186,107 @@ export default function App() {
         <>
         <div className="flex flex-col h-screen overflow-hidden antialiased bg-[#fbfbfd] dark:bg-black transition-colors duration-300">
 
-            <Header themeMode={themeMode} onToggleTheme={toggleTheme} />
+            <Header
+                themeMode={themeMode}
+                onToggleTheme={toggleTheme}
+                appMode={appMode}
+                onToggleMode={toggleAppMode}
+            />
 
-            {/* 移动端 Tab 切换 */}
-            <div className="md:hidden glass-toolbar flex items-center z-[90]">
-                <button
-                    onClick={() => setActivePanel('editor')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 text-[13px] font-semibold transition-colors border-b-2 ${activePanel === 'editor' ? 'text-[#0066cc] dark:text-[#0a84ff] border-[#0066cc] dark:border-[#0a84ff]' : 'text-[#86868b] dark:text-[#a1a1a6] border-transparent'}`}
-                >
-                    <PenLine size={15} />
-                    编辑
-                </button>
-                <button
-                    onClick={() => setActivePanel('preview')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 text-[13px] font-semibold transition-colors border-b-2 ${activePanel === 'preview' ? 'text-[#0066cc] dark:text-[#0a84ff] border-[#0066cc] dark:border-[#0a84ff]' : 'text-[#86868b] dark:text-[#a1a1a6] border-transparent'}`}
-                >
-                    <Eye size={15} />
-                    预览
-                </button>
-            </div>
-
-            {/* 排版设置 & 工具栏 (桌面端) */}
-            <div className={`glass-toolbar hidden md:grid grid-cols-1 ${gridLayoutClass()} px-0 z-[90] transition-all duration-500`}>
-                <ThemeSelector activeTheme={activeTheme} onThemeChange={setActiveTheme} />
-                <Toolbar
-                    onTranslate={handleTranslate}
-                    isTranslating={isTranslating}
-                    translateDone={translateDone}
-                    translateProgress={translateProgress}
-                    onPublishLark={() => setIsPublishOpen(true)}
-                    onOpenTranslateSettings={() => setIsTranslateSettingsOpen(true)}
-                    onOpenUsage={() => setIsUsageOpen(true)}
+            {/* ── MULTI MODE ───────────────────────────────────────────────── */}
+            {appMode === 'multi' && (
+                <MultiDashboard
+                    cards={cards}
+                    onAddCard={addCard}
+                    onUpdateCard={updateCard}
+                    onRemoveCard={removeCard}
+                    onDuplicateCard={duplicateCard}
+                    onOpenSingle={handleOpenSingleFromCard}
                 />
-            </div>
+            )}
 
-            {/* 移动端工具栏：分两行避免按钮被主题栏挤出可视区 */}
-            <div className="md:hidden glass-toolbar z-[90]">
-                <div className="overflow-x-auto no-scrollbar border-b border-[#00000010] dark:border-[#ffffff10]">
-                    <ThemeSelector activeTheme={activeTheme} onThemeChange={setActiveTheme} />
-                </div>
-                <Toolbar
-                    onTranslate={handleTranslate}
-                    isTranslating={isTranslating}
-                    translateDone={translateDone}
-                    translateProgress={translateProgress}
-                    onPublishLark={() => setIsPublishOpen(true)}
-                    onOpenTranslateSettings={() => setIsTranslateSettingsOpen(true)}
-                    onOpenUsage={() => setIsUsageOpen(true)}
-                />
-            </div>
+            {/* ── SINGLE MODE ──────────────────────────────────────────────── */}
+            {appMode === 'single' && (
+                <>
+                    {/* 移动端 Tab 切换 */}
+                    <div className="md:hidden glass-toolbar flex items-center z-[90]">
+                        <button
+                            onClick={() => setActivePanel('editor')}
+                            className={`flex-1 flex items-center justify-center gap-2 py-3 text-[13px] font-semibold transition-colors border-b-2 ${activePanel === 'editor' ? 'text-[#0066cc] dark:text-[#0a84ff] border-[#0066cc] dark:border-[#0a84ff]' : 'text-[#86868b] dark:text-[#a1a1a6] border-transparent'}`}
+                        >
+                            <PenLine size={15} />
+                            编辑
+                        </button>
+                        <button
+                            onClick={() => setActivePanel('preview')}
+                            className={`flex-1 flex items-center justify-center gap-2 py-3 text-[13px] font-semibold transition-colors border-b-2 ${activePanel === 'preview' ? 'text-[#0066cc] dark:text-[#0a84ff] border-[#0066cc] dark:border-[#0a84ff]' : 'text-[#86868b] dark:text-[#a1a1a6] border-transparent'}`}
+                        >
+                            <Eye size={15} />
+                            预览
+                        </button>
+                    </div>
 
-            {/* 编辑区 & 预览区 */}
-            <main className={`flex-1 overflow-hidden grid grid-cols-1 ${gridLayoutClass()} relative transition-all duration-500`}>
-                <div className={`${activePanel === 'editor' ? 'flex' : 'hidden'} md:flex flex-col overflow-hidden`}>
-                    <EditorPanel
-                        markdownInput={markdownInput}
-                        onInputChange={setMarkdownInput}
-                        editorScrollRef={editorScrollRef}
-                        onEditorScroll={handleEditorScroll}
-                        scrollSyncEnabled={scrollSyncEnabled}
-                    />
-                </div>
-                <div className={`${activePanel === 'preview' ? 'flex' : 'hidden'} md:flex flex-col overflow-hidden`}>
-                    <PreviewPanel
-                        renderedHtml={renderedHtml}
-                        deviceWidthClass={deviceWidthClass()}
-                        previewDevice={previewDevice}
-                        previewRef={previewRef}
-                        previewOuterScrollRef={previewOuterScrollRef}
-                        previewInnerScrollRef={previewInnerScrollRef}
-                        onPreviewOuterScroll={handlePreviewOuterScroll}
-                        onPreviewInnerScroll={handlePreviewInnerScroll}
-                        scrollSyncEnabled={scrollSyncEnabled}
-                    />
-                </div>
-            </main>
+                    {/* 排版设置 & 工具栏 (桌面端) */}
+                    <div className={`glass-toolbar hidden md:grid grid-cols-1 ${gridLayoutClass()} px-0 z-[90] transition-all duration-500`}>
+                        <ThemeSelector activeTheme={activeTheme} onThemeChange={setActiveTheme} />
+                        <Toolbar
+                            onTranslate={handleTranslate}
+                            isTranslating={isTranslating}
+                            translateDone={translateDone}
+                            translateProgress={translateProgress}
+                            onPublishLark={() => setIsPublishOpen(true)}
+                            onOpenTranslateSettings={() => setIsTranslateSettingsOpen(true)}
+                            onOpenUsage={() => setIsUsageOpen(true)}
+                        />
+                    </div>
+
+                    {/* 移动端工具栏：分两行避免按钮被主题栏挤出可视区 */}
+                    <div className="md:hidden glass-toolbar z-[90]">
+                        <div className="overflow-x-auto no-scrollbar border-b border-[#00000010] dark:border-[#ffffff10]">
+                            <ThemeSelector activeTheme={activeTheme} onThemeChange={setActiveTheme} />
+                        </div>
+                        <Toolbar
+                            onTranslate={handleTranslate}
+                            isTranslating={isTranslating}
+                            translateDone={translateDone}
+                            translateProgress={translateProgress}
+                            onPublishLark={() => setIsPublishOpen(true)}
+                            onOpenTranslateSettings={() => setIsTranslateSettingsOpen(true)}
+                            onOpenUsage={() => setIsUsageOpen(true)}
+                        />
+                    </div>
+
+                    {/* 编辑区 & 预览区 */}
+                    <main className={`flex-1 overflow-hidden grid grid-cols-1 ${gridLayoutClass()} relative transition-all duration-500`}>
+                        <div className={`${activePanel === 'editor' ? 'flex' : 'hidden'} md:flex flex-col overflow-hidden`}>
+                            <EditorPanel
+                                markdownInput={markdownInput}
+                                onInputChange={setMarkdownInput}
+                                editorScrollRef={editorScrollRef}
+                                onEditorScroll={handleEditorScroll}
+                                scrollSyncEnabled={scrollSyncEnabled}
+                            />
+                        </div>
+                        <div className={`${activePanel === 'preview' ? 'flex' : 'hidden'} md:flex flex-col overflow-hidden`}>
+                            <PreviewPanel
+                                renderedHtml={renderedHtml}
+                                deviceWidthClass={deviceWidthClass()}
+                                previewDevice={previewDevice}
+                                previewRef={previewRef}
+                                previewOuterScrollRef={previewOuterScrollRef}
+                                previewInnerScrollRef={previewInnerScrollRef}
+                                onPreviewOuterScroll={handlePreviewOuterScroll}
+                                onPreviewInnerScroll={handlePreviewInnerScroll}
+                                scrollSyncEnabled={scrollSyncEnabled}
+                            />
+                        </div>
+                    </main>
+                </>
+            )}
 
         </div>
 
-        {/* Lark Publish Dialog */}
+        {/* Lark Publish Dialog (single mode) */}
         <LarkPublishDialog
             isOpen={isPublishOpen}
             onClose={() => setIsPublishOpen(false)}
