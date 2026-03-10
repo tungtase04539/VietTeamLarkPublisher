@@ -1,6 +1,6 @@
-appId: com.raphael.publish
-productName: Raphael Publish
-copyright: Raphael Publish 2025
+appId: com.vietteam.larkpublisher
+productName: VietTeamLarkPublisher
+copyright: VietTeamLarkPublisher 2025
 forceCodeSigning: false
 
 # Correct entry point (overrides package.json for the packaged app)

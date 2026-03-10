@@ -10,7 +10,7 @@ function createWindow() {
         height: 900,
         minWidth: 800,
         minHeight: 600,
-        title: 'Raphael Publish',
+        title: 'VietTeamLarkPublisher',
         webPreferences: {
             preload: path.join(__dirname, 'preload.cjs'),
             contextIsolation: true,

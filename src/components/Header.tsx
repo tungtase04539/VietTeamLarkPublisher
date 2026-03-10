@@ -21,7 +21,7 @@ export default function Header({ themeMode, onToggleTheme, appMode, onToggleMode
                     </svg>
                 </div>
                 <span className="font-bold text-[15px] tracking-tight text-[#1d1d1f] dark:text-white truncate">
-                    Raphael Publish
+                    VietTeamLarkPublisher
                     <span className="hidden lg:inline font-normal text-[#86868b] dark:text-[#a1a1a6] ml-1.5 text-[13px]">Soạn thảo &amp; Xuất bản Lark</span>
                 </span>
             </div>
