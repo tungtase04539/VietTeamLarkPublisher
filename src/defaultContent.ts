@@ -1,100 +1,67 @@
-export const defaultContent = `# Raphael Publish - 公众号排版大师
+export const defaultContent = `# VietTeamLarkPublisher — Xuất bản Lark chuyên nghiệp
 
-> 欢迎使用 Raphael Publish，一款专为**微信公众号**与**内容创作者**设计的现代 Markdown 排版引擎！
+> Công cụ soạn thảo Markdown và xuất bản lên **Lark (Feishu)** dành cho nội dung Việt Nam — nhanh, thông minh, giữ nguyên chất lượng ảnh.
 
-## 核心功能
+## ✨ Tính năng nổi bật
 
-### 1. 魔法粘贴
+### 1. Soạn thảo Markdown thời gian thực
 
-- **跨平台粘贴**：直接从**飞书、Notion、Word**甚至任意网页复制富文本，粘贴瞬间自动转换为纯净 Markdown
-- **智能清洗**：自动剥离冗余样式和乱码，只保留段落、粗体、列表、代码块等核心结构
-- **零学习成本**：不需要会写 Markdown，粘贴进来就能用
-- **图片直贴**：支持直接粘贴截图或剪贴板图片（Ctrl/Cmd + V），自动插入 Markdown 图片
+Viết Markdown ở bên trái, xem kết quả ngay lập tức ở bên phải với **30+ theme chuyên nghiệp**:
 
-### 2. 多图排版
+- **5 theme Lark** tối ưu cho Lark/Feishu: Lark Blue, Jade, Violet, Amber, Teal
+- **Theme kinh điển**: Mac White, Claude Oat, Medium Blog, Stripe, Linear Dark…
+- **Theme sáng tạo**: Dracula, Nord, Cyberpunk, Sakura, Solarized…
 
-支持朋友圈式的多列网格布局，比如下面自然形成的两图并排。通过 \`wechatCompat\` 引擎这些多图也能在微信中完美呈现：
+> Thử chuyển theme ở thanh công cụ trên cùng — mỗi theme có màu sắc, typography và style riêng biệt.
 
-![](https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&h=400&fit=crop)
-![](https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=600&h=400&fit=crop)
+### 2. Đăng Lark 1 click
 
-### 3. 30 套高定样式
+Bấm **Đăng Lark** → tài liệu tự động được tạo trên Lark Doc / Wiki:
 
-告别同质化的白底模板，30 套精心打磨的视觉主题任你切换（下方仅展示部分代表风格）：
+- **H1 tự động làm tiêu đề** tài liệu Lark
+- **Ảnh tự upload** lên Lark Drive, không bị mất
+- Ảnh trong list item hiển thị đúng dạng image block
+- Hỗ trợ ảnh lớn, không bị lỗi giới hạn 100k ký tự
 
-1. **极简与经典**：Mac 纯净白、微信公众号原生、Medium 博客风
-2. **深度阅读**：Claude 燕麦色、NYT 纽约时报、Retro 复古羊皮纸
-3. **极客与商务**：Stripe 硅谷风、飞书效率蓝、Linear 暗夜模式、Bloomberg 终端机
+### 3. Dịch tự động thông minh
 
-> 试试在顶部切换不同的「排版风格」，每一套都有独特的配色、字体和引用样式。
+Tích hợp **Gemini, GPT-4, Claude, 302.ai**:
 
-### 4. 一键复制到公众号
+- Dịch song song toàn bộ các đoạn cùng lúc (Promise.all)
+- Bảo vệ code block, img:// refs không bị dịch
+- Theo dõi chi phí API theo từng bài
 
-点击「**复制到公众号**」按钮，粘贴到公众号后台，格式完美保留：
+### 4. Upload & dịch ảnh
 
-- **图片自动打包**：所有外链图片自动转 Base64，不会出现"此图片来自第三方"的报错
-- **样式零丢失**：背景色、圆角、间距全部精准还原
-- **表格不塌陷**：底层 DOM 重塑，列表和表格在微信中不会排版错乱
+- Match ảnh theo tên file vào đúng vị trí trong Markdown
+- Dịch ảnh có chữ qua Gemini Vision API
+- **Không resize**, giữ nguyên chất lượng gốc
 
-### 5. 多端实时预览
+## 📊 So sánh tính năng
 
-右侧工具栏提供三种预览尺寸：
+| Tính năng | Mô tả |
+|-----------|-------|
+| Markdown Editor | Real-time preview, multi-device |
+| Lark Publish | Doc + Wiki, ảnh tự upload |
+| AI Dịch | Gemini / GPT-4 / Claude / 302.ai |
+| Multi-card | Quản lý nhiều bài cùng lúc |
+| Usage Stats | Theo dõi chi phí theo card |
+| Image Store | Persist localStorage, không mất khi refresh |
 
-- **手机视图** (480px)：模拟微信阅读的真实宽度
-- **平板视图** (768px)：适合横屏阅读效果预览
-- **桌面视图** (PC)：完整宽屏预览
+## 💻 Code example
 
-### 6. 导出功能
+\`\`\`typescript
+// Publish markdown lên Lark — tự động extract H1 làm title
+const url = await runLarkPublish({
+  wikiEnabled: true,
+  wikiSpaceId: 'your-space-id',
+  wikiNodeToken: 'your-node-token',
+}, markdownContent);
 
-除了复制到公众号，还支持：
-
-- **导出 PDF**：一键生成高质量 PDF 文件，适合存档和分享
-- **导出 HTML**：获取完整的带样式 HTML，可用于邮件或网页发布
-
-## 代码高亮
-
-内置 MacOS 风格的代码高亮控制台，支持多种编程语言：
-
-\`\`\`javascript
-// Raphael Publish 排版引擎核心流程
-const raphael = {
-  // 1. smart paste: 自动清洗富文本
-  paste: (richText) => cleanToMarkdown(richText),
-
-  // 2. render: Markdown → 带样式 HTML
-  render: (md) => applyTheme(md, selectedTheme),
-
-  // 3. export: 图片打包 + 微信兼容处理
-  export: async (html) => {
-    const compatible = await makeWeChatCompatible(html);
-    return bundleImagesAsBase64(compatible);
-  }
-};
+console.log('Published:', url);
 \`\`\`
-
-## 引用样式
-
-> 每套主题都有独特的引用样式——不同的背景色、字体颜色和左侧边栏。切换主题时，留意引用块的变化。
-
-## 表格支持
-
-| 功能 | 说明 |
-|------|------|
-| 魔法粘贴 | 从飞书/Notion/Word 粘贴，自动转 Markdown |
-| 30 套主题 | 经典 / 潮流 / 更多风格，全场景主题随时切换 |
-| 图片打包 | 外链图片自动 Base64，微信零报错 |
-| 图片直贴 | 支持截图/图片直接粘贴，自动转为 Markdown 图片 |
-| 多图排版 | 2-3 列网格布局，微信中不塌陷 |
-| 代码高亮 | MacOS 风格指示灯 + 多语言语法高亮 |
-| 多端预览 | 手机 / 平板 / 桌面三种视图实时切换 |
-| 导出 | 支持 PDF 和 HTML 导出 |
 
 ---
 
-**提示**：
-
-- 在顶部切换「排版风格」，体验不同主题的视觉效果
-- 从飞书或 Notion 复制一段内容粘贴到左侧，体验魔法粘贴
-- 点击设备图标切换手机/平板/桌面预览
-- 清空以上内容，开始你的创作
+**Gợi ý:** Xoá nội dung này và bắt đầu soạn bài của bạn, hoặc bấm **Đăng Lark** để xem thử!
 `;
