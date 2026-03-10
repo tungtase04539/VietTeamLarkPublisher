@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { pruneOrphanedImages } from './imageStore';
 
 export interface Card {
     id: string;
@@ -51,9 +52,10 @@ export function useCardStore(defaultTheme = 'default') {
         return [makeDefaultCard(defaultTheme)];
     });
 
-    // Persist on every change
+    // Persist on change — debounced to avoid serialising on every keystroke
     useEffect(() => {
-        saveCards(cards);
+        const timer = setTimeout(() => saveCards(cards), 800);
+        return () => clearTimeout(timer);
     }, [cards]);
 
     const addCard = useCallback(() => {
@@ -63,7 +65,10 @@ export function useCardStore(defaultTheme = 'default') {
     const removeCard = useCallback((id: string) => {
         setCards(prev => {
             const next = prev.filter(c => c.id !== id);
-            return next.length > 0 ? next : [makeDefaultCard(defaultTheme)];
+            const remaining = next.length > 0 ? next : [makeDefaultCard(defaultTheme)];
+            // GC: free imageStore entries no longer referenced by any card
+            pruneOrphanedImages(remaining.map(c => c.markdownInput));
+            return remaining;
         });
     }, [defaultTheme]);
 

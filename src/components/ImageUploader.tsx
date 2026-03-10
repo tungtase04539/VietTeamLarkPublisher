@@ -1,7 +1,8 @@
 import React, { useRef, useState, useCallback } from 'react';
-import { ImagePlus, X, CheckCircle2, Trash2 } from 'lucide-react';
+import { ImagePlus, X, Trash2, Languages, Loader2, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { generateImageKey, storeImage, deleteImage } from '../lib/imageStore';
+import { generateImageKey, storeImage, deleteImage, getImage } from '../lib/imageStore';
+import { loadTranslateSettings } from '../lib/translateSettings';
 
 interface UploadedImage {
     key: string;
@@ -29,10 +30,51 @@ function fileToDataUrl(file: File): Promise<string> {
     });
 }
 
+async function translateImageWithGemini(dataUrl: string): Promise<string> {
+    const settings = loadTranslateSettings();
+    const apiKey = settings.apiKey || '';
+    const [header, base64Data] = dataUrl.split(',');
+    const mimeMatch = header.match(/data:([^;]+)/);
+    const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+
+    const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+            body: JSON.stringify({
+                contents: [{ role: 'user', parts: [
+                    { text: 'Translate all text visible in this image to Vietnamese. Keep the exact same visual layout, colors, and design — only change the language of the text.' },
+                    { inline_data: { mime_type: mimeType, data: base64Data } },
+                ]}],
+                generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+            }),
+        }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
+        throw new Error(err?.error?.message ?? `HTTP ${res.status}`);
+    }
+    const data = await res.json() as {
+        candidates?: { finishReason?: string; content?: { parts?: { text?: string; inlineData?: { mimeType: string; data: string } }[] } }[]
+    };
+    console.log('[Nano Banana] Full response:', JSON.stringify(data, null, 2));
+    const parts = data.candidates?.[0]?.content?.parts ?? [];
+    const imgPart = parts.find(p => p.inlineData?.data);
+    if (!imgPart?.inlineData) {
+        const textMsg = parts.find(p => p.text)?.text ?? '';
+        const reason = data.candidates?.[0]?.finishReason ?? 'unknown';
+        throw new Error(`Nano Banana (${reason}): ${textMsg.slice(0, 300) || 'Không trả về ảnh. Xem Console để biết chi tiết.'}`);
+    }
+    return `data:${imgPart.inlineData.mimeType};base64,${imgPart.inlineData.data}`;
+}
+
 export default function ImageUploader({ onInsertImage }: ImageUploaderProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [images, setImages] = useState<UploadedImage[]>([]);
     const [isDraggingOver, setIsDraggingOver] = useState(false);
+    const [translating, setTranslating] = useState<Record<string, boolean>>({});
+    const [translateDone, setTranslateDone] = useState<Record<string, boolean>>({});
     const inputRef = useRef<HTMLInputElement>(null);
 
     const processFiles = useCallback(async (files: FileList | File[]) => {
@@ -42,13 +84,10 @@ export default function ImageUploader({ onInsertImage }: ImageUploaderProps) {
         for (const file of imageFiles) {
             const key = generateImageKey();
             const dataUrl = await fileToDataUrl(file);
-            storeImage(key, dataUrl);                       // store base64 internally
-            const preview = URL.createObjectURL(file);     // blob URL just for thumbnail
-
+            storeImage(key, dataUrl);
+            const preview = URL.createObjectURL(file);
             const uploaded: UploadedImage = { key, name: file.name, size: file.size, preview };
             setImages(prev => [...prev, uploaded]);
-
-            // Insert clean reference into markdown
             const safeName = file.name.replace(/\.[^.]+$/, '');
             onInsertImage(`![${safeName}](img://${key})`);
         }
@@ -69,9 +108,29 @@ export default function ImageUploader({ onInsertImage }: ImageUploaderProps) {
         setImages(prev => prev.filter(img => img.key !== key));
     };
 
+    const handleTranslate = async (img: UploadedImage) => {
+        const dataUrl = getImage(img.key);
+        if (!dataUrl) { alert('Không tìm thấy data ảnh. Hãy tải lại ảnh.'); return; }
+        setTranslating(prev => ({ ...prev, [img.key]: true }));
+        try {
+            const translatedDataUrl = await translateImageWithGemini(dataUrl);
+            const newKey = generateImageKey();
+            storeImage(newKey, translatedDataUrl);
+            const translatedName = img.name.replace(/(\.[^.]+)?$/, '_vi$1');
+            setImages(prev => [...prev, { key: newKey, name: translatedName, size: 0, preview: translatedDataUrl }]);
+            onInsertImage(`![${translatedName.replace(/\.[^.]+$/, '')}](img://${newKey})`);
+            setTranslateDone(prev => ({ ...prev, [img.key]: true }));
+            setTimeout(() => setTranslateDone(prev => ({ ...prev, [img.key]: false })), 3000);
+        } catch (err) {
+            alert(`Dịch ảnh thất bại: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+            setTranslating(prev => ({ ...prev, [img.key]: false }));
+        }
+    };
+
     return (
         <>
-            {/* Trigger button */}
+            {/* Trigger */}
             <button
                 onClick={() => setIsOpen(prev => !prev)}
                 title="Tải ảnh lên"
@@ -90,80 +149,135 @@ export default function ImageUploader({ onInsertImage }: ImageUploaderProps) {
                 )}
             </button>
 
-            {/* Panel */}
+            {/* Fullscreen Modal */}
             <AnimatePresence>
                 {isOpen && (
-                    <motion.div
-                        initial={{ opacity: 0, y: 8, scale: 0.97 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 8, scale: 0.97 }}
-                        transition={{ duration: 0.2, ease: [0.25, 0.1, 0.25, 1] }}
-                        className="absolute bottom-full left-0 right-0 mb-2 mx-2 sm:mx-4 bg-white dark:bg-[#1c1c1e] rounded-2xl shadow-apple-lg border border-[#00000015] dark:border-[#ffffff15] z-50 overflow-hidden"
-                        style={{ maxHeight: '65vh' }}
-                    >
-                        {/* Header */}
-                        <div className="flex items-center justify-between px-4 py-3 border-b border-[#00000010] dark:border-[#ffffff10]">
-                            <div className="flex items-center gap-2">
-                                <ImagePlus size={15} className="text-[#0066cc] dark:text-[#0a84ff]" />
-                                <span className="text-[13px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Tải ảnh</span>
-                            </div>
-                            <button onClick={() => setIsOpen(false)} className="p-1 rounded-full hover:bg-[#00000008] dark:hover:bg-[#ffffff10]">
-                                <X size={15} className="text-[#86868b]" />
-                            </button>
-                        </div>
-
-                        {/* Info */}
-                        <div className="mx-4 mt-3 px-3 py-2 rounded-xl bg-[#0066cc]/6 dark:bg-[#0a84ff]/8 border border-[#0066cc]/12">
-                            <p className="text-[12px] text-[#0066cc] dark:text-[#0a84ff] leading-relaxed">
-                                Ảnh được lưu trong bộ nhớ phiên làm việc. Editor hiển thị <code className="bg-[#0066cc]/10 px-1 rounded text-[11px]">img://key</code> — preview và Lark publish đều render đúng.
-                            </p>
-                        </div>
-
-                        {/* Drop zone */}
-                        <div
-                            onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
-                            onDragLeave={() => setIsDraggingOver(false)}
-                            onDrop={handleDrop}
-                            onClick={() => inputRef.current?.click()}
-                            className={`mx-4 mt-3 rounded-xl border-2 border-dashed cursor-pointer transition-all duration-200 flex flex-col items-center justify-center gap-1.5 py-5
-                                ${isDraggingOver
-                                    ? 'border-[#0066cc] dark:border-[#0a84ff] bg-[#0066cc]/5'
-                                    : 'border-[#00000015] dark:border-[#ffffff15] bg-[#00000004] hover:border-[#0066cc]/40 hover:bg-[#0066cc]/3'
-                                }`}
+                    <>
+                        {/* Backdrop */}
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[200]"
+                            onClick={() => setIsOpen(false)}
+                        />
+                        {/* Modal panel */}
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.96, y: 16 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.96, y: 16 }}
+                            transition={{ duration: 0.2, ease: [0.25, 0.1, 0.25, 1] }}
+                            className="fixed inset-4 md:inset-8 bg-white dark:bg-[#1c1c1e] rounded-2xl shadow-2xl border border-[#00000015] dark:border-[#ffffff15] z-[201] flex flex-col overflow-hidden"
+                            onClick={e => e.stopPropagation()}
                         >
-                            <ImagePlus size={20} className={isDraggingOver ? 'text-[#0066cc]' : 'text-[#86868b]'} />
-                            <p className="text-[13px] font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">
-                                {isDraggingOver ? 'Thả ảnh vào đây' : 'Kéo thả hoặc click để chọn ảnh'}
-                            </p>
-                            <p className="text-[11px] text-[#86868b]">Hỗ trợ chọn nhiều ảnh cùng lúc</p>
-                        </div>
-                        <input ref={inputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} />
-
-                        {/* Uploaded list */}
-                        {images.length > 0 && (
-                            <div className="overflow-y-auto px-4 pb-4 mt-3 space-y-1.5" style={{ maxHeight: '28vh' }}>
-                                {images.map(img => (
-                                    <div key={img.key} className="flex items-center gap-3 p-2 rounded-xl bg-[#34c759]/8 border border-[#34c759]/20">
-                                        <img src={img.preview} alt={img.name} className="w-12 h-9 object-cover rounded-lg shrink-0 border border-[#00000010]" />
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-[12.5px] font-medium text-[#1d1d1f] dark:text-[#f5f5f7] truncate">{img.name}</p>
-                                            <p className="text-[11px] text-[#86868b]">{formatBytes(img.size)}</p>
-                                        </div>
-                                        <div className="flex items-center gap-2 shrink-0">
-                                            <CheckCircle2 size={14} className="text-[#34c759]" />
-                                            <button onClick={() => handleRemove(img.key, img.preview)} className="p-1 rounded-full hover:bg-[#ff3b30]/10 text-[#86868b] hover:text-[#ff3b30] transition-colors">
-                                                <Trash2 size={13} />
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
+                            {/* Header */}
+                            <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#00000010] dark:border-[#ffffff10] shrink-0">
+                                <div className="flex items-center gap-2">
+                                    <ImagePlus size={15} className="text-[#0066cc] dark:text-[#0a84ff]" />
+                                    <span className="text-[14px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">
+                                        Tải & Dịch Ảnh
+                                        {images.length > 0 && <span className="ml-1.5 text-[#86868b] font-normal text-[13px]">({images.length} ảnh)</span>}
+                                    </span>
+                                </div>
+                                <button onClick={() => setIsOpen(false)} className="p-1.5 rounded-full hover:bg-[#00000008] dark:hover:bg-[#ffffff10] transition-colors">
+                                    <X size={15} className="text-[#86868b]" />
+                                </button>
                             </div>
-                        )}
 
-                        {images.length === 0 && (
-                            <p className="text-center text-[12px] text-[#86868b] py-3 pb-4">Chưa có ảnh nào.</p>
-                        )}
-                    </motion.div>
+                            <div className="flex-1 overflow-y-auto p-5">
+                                {/* Drop zone */}
+                                <div
+                                    onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
+                                    onDragLeave={() => setIsDraggingOver(false)}
+                                    onDrop={handleDrop}
+                                    onClick={() => inputRef.current?.click()}
+                                    className={`rounded-xl border-2 border-dashed cursor-pointer transition-all duration-200 flex flex-col items-center justify-center gap-2 py-8 mb-5
+                                        ${isDraggingOver
+                                            ? 'border-[#0066cc] dark:border-[#0a84ff] bg-[#0066cc]/5'
+                                            : 'border-[#00000015] dark:border-[#ffffff15] bg-[#00000004] hover:border-[#0066cc]/40 hover:bg-[#0066cc]/3'
+                                        }`}
+                                >
+                                    <ImagePlus size={28} className={isDraggingOver ? 'text-[#0066cc]' : 'text-[#86868b]'} />
+                                    <p className="text-[13px] font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">
+                                        {isDraggingOver ? 'Thả ảnh vào đây' : 'Kéo thả hoặc click để chọn ảnh'}
+                                    </p>
+                                    <p className="text-[11px] text-[#86868b]">Hỗ trợ chọn nhiều ảnh cùng lúc</p>
+                                </div>
+                                <input ref={inputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} />
+
+                                {/* Image grid */}
+                                {images.length > 0 ? (
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                                        {images.map(img => (
+                                            <div key={img.key} className="relative group rounded-xl overflow-hidden border border-[#00000012] dark:border-[#ffffff12] bg-[#f5f5f7] dark:bg-[#2c2c2e] shadow-sm">
+                                                {/* Image preview */}
+                                                <div className="relative w-full" style={{ paddingBottom: '66%' }}>
+                                                    <img
+                                                        src={img.preview}
+                                                        alt={img.name}
+                                                        className="absolute inset-0 w-full h-full object-cover"
+                                                    />
+                                                    {/* Overlay actions */}
+                                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-between p-2">
+                                                        <motion.button
+                                                            whileHover={{ scale: 1.05 }}
+                                                            whileTap={{ scale: 0.95 }}
+                                                            onClick={() => handleTranslate(img)}
+                                                            disabled={translating[img.key]}
+                                                            title="Dịch nội dung ảnh sang Tiếng Việt"
+                                                            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-all shadow-sm ${
+                                                                translateDone[img.key]
+                                                                    ? 'bg-[#34c759] text-white'
+                                                                    : 'bg-white/90 backdrop-blur-sm text-[#1d1d1f] hover:bg-[#0066cc] hover:text-white'
+                                                            } disabled:opacity-60`}
+                                                        >
+                                                            {translating[img.key] ? <Loader2 size={10} className="animate-spin" /> : translateDone[img.key] ? <CheckCircle2 size={10} /> : <Languages size={10} />}
+                                                            {translating[img.key] ? 'Đang dịch...' : translateDone[img.key] ? 'Xong!' : 'Dịch ảnh'}
+                                                        </motion.button>
+                                                        <button
+                                                            onClick={() => handleRemove(img.key, img.preview)}
+                                                            className="p-1.5 rounded-lg bg-black/40 backdrop-blur-sm text-white/80 hover:text-[#ff3b30] hover:bg-black/60 transition-colors"
+                                                            title="Xoá ảnh"
+                                                        >
+                                                            <Trash2 size={12} />
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {/* Image info */}
+                                                <div className="px-2.5 py-2">
+                                                    <p className="text-[11px] font-medium text-[#1d1d1f] dark:text-[#f5f5f7] truncate">{img.name}</p>
+                                                    <div className="flex items-center justify-between mt-0.5">
+                                                        <p className="text-[10px] text-[#86868b]">{formatBytes(img.size)}</p>
+                                                        <motion.button
+                                                            whileHover={{ scale: 1.05 }}
+                                                            whileTap={{ scale: 0.95 }}
+                                                            onClick={() => handleTranslate(img)}
+                                                            disabled={translating[img.key]}
+                                                            title="Dịch nội dung ảnh"
+                                                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-all ${
+                                                                translateDone[img.key]
+                                                                    ? 'bg-[#34c759]/15 text-[#1d8d3a] dark:text-[#30d158]'
+                                                                    : translating[img.key]
+                                                                    ? 'bg-[#0066cc]/10 text-[#0066cc] cursor-not-allowed'
+                                                                    : 'bg-[#0066cc]/8 text-[#0066cc] dark:text-[#0a84ff] hover:bg-[#0066cc]/15'
+                                                            }`}
+                                                        >
+                                                            {translating[img.key] ? <Loader2 size={8} className="animate-spin" /> : translateDone[img.key] ? <CheckCircle2 size={8} /> : <Languages size={8} />}
+                                                            {translating[img.key] ? 'Dịch...' : translateDone[img.key] ? 'Xong' : 'Dịch'}
+                                                        </motion.button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="text-center text-[12px] text-[#86868b]/60">Chưa có ảnh nào. Kéo thả hoặc click vào vùng trên để thêm ảnh.</p>
+                                )}
+                            </div>
+                        </motion.div>
+                    </>
                 )}
             </AnimatePresence>
         </>

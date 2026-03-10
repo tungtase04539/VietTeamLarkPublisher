@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 
 import { Wand2 } from 'lucide-react';
 import { handleSmartPaste } from '../lib/htmlToMarkdown';
@@ -14,6 +14,25 @@ interface EditorPanelProps {
 
 export default function EditorPanel({ markdownInput, onInputChange, editorScrollRef, onEditorScroll, scrollSyncEnabled }: EditorPanelProps) {
     const lastSelectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
+    // currentMarkdownRef stays in sync synchronously so batch insertions don't use stale closure value
+    const currentMarkdownRef = useRef(markdownInput);
+    useEffect(() => { currentMarkdownRef.current = markdownInput; }, [markdownInput]);
+    const [isDroppingMd, setIsDroppingMd] = useState(false);
+
+    const handleMdDrop = (e: React.DragEvent<HTMLTextAreaElement>) => {
+        e.preventDefault();
+        setIsDroppingMd(false);
+        const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.md') || f.type === 'text/markdown' || f.type === 'text/plain');
+        if (files.length === 0) return;
+        const file = files[0];
+        const reader = new FileReader();
+        reader.onload = () => {
+            const text = String(reader.result || '');
+            if (markdownInput.trim() && !window.confirm(`Thay thế nội dung hiện tại bằng "${file.name}"?`)) return;
+            onInputChange(text);
+        };
+        reader.readAsText(file, 'utf-8');
+    };
 
     const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
         handleSmartPaste(e, markdownInput, onInputChange);
@@ -26,15 +45,50 @@ export default function EditorPanel({ markdownInput, onInputChange, editorScroll
     };
 
     const handleInsertImage = (markdownSyntax: string) => {
+        // Use ref so consecutive calls in the same event tick see the latest value
+        const currentMarkdown = currentMarkdownRef.current;
+
+        // ── Smart match: replace existing Image Token refs in-place ─
+        const newSrcMatch = markdownSyntax.match(/\(img:\/\/([^)]+)\)/);
+        const altMatch = markdownSyntax.match(/^!\[([^\]]*)\]/);
+        if (newSrcMatch && altMatch) {
+            const newImgSrc = `img://${newSrcMatch[1]}`;
+            const altText = altMatch[1];
+
+            const tokenPattern = new RegExp(
+                `!\\[Image Token:\\s*${altText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]\\([^)]+\\)`,
+                'g'
+            );
+            const localPattern = new RegExp(
+                `!\\[[^\\]]*\\]\\(images/${altText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\.[a-z]+)?\\)`,
+                'g'
+            );
+
+            const withTokenReplaced = currentMarkdown.replace(tokenPattern, `![${altText}](${newImgSrc})`);
+            if (withTokenReplaced !== currentMarkdown) {
+                currentMarkdownRef.current = withTokenReplaced; // update ref synchronously
+                onInputChange(withTokenReplaced);
+                return;
+            }
+            const withLocalReplaced = currentMarkdown.replace(localPattern, `![${altText}](${newImgSrc})`);
+            if (withLocalReplaced !== currentMarkdown) {
+                currentMarkdownRef.current = withLocalReplaced;
+                onInputChange(withLocalReplaced);
+                return;
+            }
+        }
+
+        // ── Default: insert at cursor position ──────────────────────
         const { start, end } = lastSelectionRef.current;
-        const before = markdownInput.substring(0, start);
-        const after = markdownInput.substring(end);
+        const before = currentMarkdown.substring(0, start);
+        const after = currentMarkdown.substring(end);
         const needsLeadingNewline = before.length > 0 && !before.endsWith('\n\n');
         const needsTrailingNewline = after.length > 0 && !after.startsWith('\n');
         const prefix = needsLeadingNewline ? '\n\n' : '';
         const suffix = needsTrailingNewline ? '\n\n' : '';
         const inserted = `${prefix}${markdownSyntax}${suffix}`;
         const newValue = before + inserted + after;
+        currentMarkdownRef.current = newValue; // update ref synchronously
         onInputChange(newValue);
 
         setTimeout(() => {
@@ -47,11 +101,15 @@ export default function EditorPanel({ markdownInput, onInputChange, editorScroll
         }, 0);
     };
 
+
+
     return (
         <div className="border-r border-[#00000015] dark:border-[#ffffff15] flex flex-col relative z-30 bg-transparent flex-1 min-h-0">
             <textarea
                 ref={editorScrollRef}
-                className="w-full flex-1 p-8 md:p-10 resize-none bg-transparent outline-none font-mono text-[15px] md:text-[16px] leading-[1.8] no-scrollbar text-[#1d1d1f] dark:text-[#f5f5f7] placeholder-[#86868b] dark:placeholder-[#6e6e73]"
+                className={`w-full flex-1 p-8 md:p-10 resize-none bg-transparent outline-none font-mono text-[15px] md:text-[16px] leading-[1.8] no-scrollbar text-[#1d1d1f] dark:text-[#f5f5f7] placeholder-[#86868b] dark:placeholder-[#6e6e73] transition-all ${
+                    isDroppingMd ? 'ring-2 ring-inset ring-[#0066cc]/50 bg-[#0066cc]/4' : ''
+                }`}
                 value={markdownInput}
                 onChange={(e) => onInputChange(e.target.value)}
                 onPaste={onPaste}
@@ -60,7 +118,10 @@ export default function EditorPanel({ markdownInput, onInputChange, editorScroll
                 onMouseUp={trackSelection}
                 onClick={trackSelection}
                 onKeyDown={trackSelection}
-                placeholder="Nhập nội dung Markdown tại đây..."
+                onDragOver={(e) => { if (Array.from(e.dataTransfer.items).some(i => i.type === 'text/plain' || i.kind === 'file')) { e.preventDefault(); setIsDroppingMd(true); } }}
+                onDragLeave={() => setIsDroppingMd(false)}
+                onDrop={handleMdDrop}
+                placeholder="Nhập nội dung Markdown tại đây...\n\nHoặc kéo thả file .md vào đây"
                 spellCheck={false}
             />
 

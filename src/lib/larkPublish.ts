@@ -54,6 +54,84 @@ type TextElement = {
     };
 };
 
+// Sentinel type for unresolved image placeholders (resolved before doc insertion)
+export type ImagePlaceholder = {
+    _imageSrc: string; // base64 data URL or img:// key
+    _imageAlt: string;
+};
+
+// ─── Upload image to Lark Drive ───────────────────────────────────────────────
+
+export async function uploadImageToLark(
+    token: string,
+    blockId: string,   // The image block's own block_id — NOT the document ID
+    base64DataUrl: string,
+    filename = 'image.png',
+): Promise<string | null> {
+    // Convert base64 data URL → Blob
+    let blob: Blob;
+    try {
+        const [header, b64] = base64DataUrl.split(',');
+        const mime = header.match(/:(.*?);/)?.[1] ?? 'image/png';
+        // Uint8Array.from is ~10× faster than a manual charCodeAt loop for large images
+        const binary = atob(b64);
+        const arr = Uint8Array.from(binary, c => c.charCodeAt(0));
+        blob = new Blob([arr], { type: mime });
+        const ext = mime.split('/')[1]?.replace('jpeg', 'jpg') ?? 'png';
+        filename = `image.${ext}`;
+    } catch (e) {
+        console.warn('[Lark] uploadImageToLark: failed to decode base64', e);
+        return null;
+    }
+
+    const form = new FormData();
+    form.append('file_name', filename);
+    form.append('parent_type', 'docx_image');
+    form.append('parent_node', blockId);   // Must be the image block's block_id
+    form.append('size', String(blob.size));
+    form.append('file', blob, filename);
+
+    const res = await fetch(`${LARK_BASE}/open-apis/drive/v1/medias/upload_all`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+    });
+    const data = await res.json() as { code: number; msg: string; data?: { file_token?: string } };
+    if (data.code !== 0 || !data.data?.file_token) {
+        console.warn('[Lark] Image upload failed:', data.msg);
+        return null;
+    }
+    return data.data.file_token;
+}
+
+// ─── Resolve image placeholders (resolve img:// refs to base64) ──────────────
+// NOTE: actual upload to Lark happens during insertion (insertBlocksIntoDoc)
+// because Lark requires parent_node = image block's block_id (not the document ID).
+// This function only resolves img:// memory refs to their base64 data URLs.
+
+export async function resolveImageBlocks(
+    _token: string,
+    _documentId: string,
+    blocks: unknown[],
+    imageStore: Map<string, string>,
+    onProgress?: (uploaded: number, total: number) => void,
+): Promise<unknown[]> {
+    const resolved = blocks.map(b => {
+        const block = b as Record<string, unknown>;
+        if (block._imageSrc === undefined) return b;
+        let src = block._imageSrc as string;
+        // Resolve img:// key → base64
+        if (src.startsWith('img://')) {
+            const key = src.slice(6);
+            src = imageStore.get(key) ?? src;
+        }
+        // Keep as placeholder — insertion will create block then upload
+        return { ...block, _imageSrc: src };
+    });
+    onProgress?.(0, 0); // no-op progress
+    return resolved;
+}
+
 function parseInline(text: string, accentColor?: number | undefined): TextElement[] {
     // Remove raw HTML tags
     text = text.replace(/<[^>]+>/g, '');
@@ -177,7 +255,14 @@ export function markdownToLarkBlocks(markdown: string, accentHex?: string): unkn
         // ── Unordered list ────────────────────────────────────────
         const ulMatch = line.match(/^(\s*)[-*+]\s+(.+)$/);
         if (ulMatch) {
-            blocks.push(makeBlock(12, 'bullet', parseInline(ulMatch[2], accentCode)));
+            const listContent = ulMatch[2].trim();
+            const imgInList = listContent.match(/^!\[([^\]]*)\]\((.+)\)$/);
+            if (imgInList) {
+                // Image-only list item — render as a proper image block, not text
+                blocks.push({ _imageSrc: imgInList[2], _imageAlt: imgInList[1] || 'image' } as unknown);
+            } else {
+                blocks.push(makeBlock(12, 'bullet', parseInline(listContent, accentCode)));
+            }
             i++;
             continue;
         }
@@ -185,7 +270,13 @@ export function markdownToLarkBlocks(markdown: string, accentHex?: string): unkn
         // ── Ordered list ──────────────────────────────────────────
         const olMatch = line.match(/^(\s*)\d+[.)]\s+(.+)$/);
         if (olMatch) {
-            blocks.push(makeBlock(13, 'ordered', parseInline(olMatch[2], accentCode)));
+            const listContent = olMatch[2].trim();
+            const imgInList = listContent.match(/^!\[([^\]]*)\]\((.+)\)$/);
+            if (imgInList) {
+                blocks.push({ _imageSrc: imgInList[2], _imageAlt: imgInList[1] || 'image' } as unknown);
+            } else {
+                blocks.push(makeBlock(13, 'ordered', parseInline(listContent, accentCode)));
+            }
             i++;
             continue;
         }
@@ -199,15 +290,26 @@ export function markdownToLarkBlocks(markdown: string, accentHex?: string): unkn
             continue;
         }
 
-        // ── Image (base64 or URL) — show as placeholder ───────────
-        if (line.match(/^!\[([^\]]*)\]\((.+)\)$/)) {
-            const alt = line.match(/^!\[([^\]]*)\]/)![1] || 'image';
-            const url = line.match(/\]\((.+)\)/)![1];
-            // Skip base64 entirely, show URL images as text reference
-            const isBase64 = url.startsWith('data:');
-            if (!isBase64) {
-                blocks.push(makeBlock(2, 'text', [{ text_run: { content: `[🖼️ ${alt}](${url})` } }]));
+        // ── Image — capture as placeholder for upload ─────────────
+        // trimStart so indented image lines (e.g. inside blockquotes) still match
+        const trimmedForImg = line.trimStart();
+        if (trimmedForImg.match(/^!\[([^\]]*)\]\((.+)\)$/)) {
+            const alt = trimmedForImg.match(/^!\[([^\]]*)\]/)![1] || 'image';
+            const url = trimmedForImg.match(/\]\((.+)\)/)![1];
+
+            // Detect pre-uploaded Lark image token:
+            // ONLY when alt text explicitly has "Image Token: <token>"
+            const larkTokenMatch = alt.match(/^Image Token:\s*(\S+)$/);
+            if (larkTokenMatch) {
+                // Already a Lark file_token — use directly, no re-upload needed
+                blocks.push({ _larkToken: larkTokenMatch[1] } as unknown);
+                i++;
+                continue;
             }
+
+            // Capture base64 and img:// refs as placeholders;
+            // external URLs are also captured for consistent handling.
+            blocks.push({ _imageSrc: url, _imageAlt: alt } as unknown);
             i++;
             continue;
         }
@@ -233,6 +335,48 @@ export function markdownToLarkBlocks(markdown: string, accentHex?: string): unkn
 
         // ── Empty line ────────────────────────────────────────────
         if (line.trim() === '') {
+            i++;
+            continue;
+        }
+
+        // ── Oversized line guard ──────────────────────────────────
+        // Lark rejects text blocks with > 100,000 chars (code 4000027).
+        // If a line is huge, it almost always means a base64 image URL
+        // is embedded inline (e.g. from a paste or partial match fail).
+        // Strategy: split the line on embedded data: URIs and yield
+        // each image as an _imageSrc block and surrounding text as text blocks.
+        const LARK_TEXT_MAX = 90_000;
+        if (line.length > LARK_TEXT_MAX) {
+            // Split on embedded inline images: ![alt](data:...)
+            const inlineImgRe = /!\[([^\]]*)\]\((data:[^)]{20,}|img:\/\/[^)]+)\)/g;
+            let lastEnd = 0;
+            let match: RegExpExecArray | null;
+            let pushed = false;
+            while ((match = inlineImgRe.exec(line)) !== null) {
+                const before = line.slice(lastEnd, match.index).trim();
+                if (before) {
+                    // chunk before-text if still huge
+                    for (let ci = 0; ci < before.length; ci += LARK_TEXT_MAX) {
+                        blocks.push(makeBlock(2, 'text', parseInline(before.slice(ci, ci + LARK_TEXT_MAX), accentCode)));
+                    }
+                }
+                blocks.push({ _imageSrc: match[2], _imageAlt: match[1] || 'image' } as unknown);
+                lastEnd = match.index + match[0].length;
+                pushed = true;
+            }
+            const after = line.slice(lastEnd).trim();
+            if (after) {
+                for (let ci = 0; ci < after.length; ci += LARK_TEXT_MAX) {
+                    blocks.push(makeBlock(2, 'text', parseInline(after.slice(ci, ci + LARK_TEXT_MAX), accentCode)));
+                }
+                pushed = true;
+            }
+            if (!pushed) {
+                // No inline images found — still chunk the raw text to avoid the error
+                for (let ci = 0; ci < line.length; ci += LARK_TEXT_MAX) {
+                    blocks.push(makeBlock(2, 'text', [{ text_run: { content: line.slice(ci, ci + LARK_TEXT_MAX) } }]));
+                }
+            }
             i++;
             continue;
         }
@@ -325,28 +469,36 @@ export interface PublishConfig {
     title: string;
     markdown: string;
     folderToken?: string;
+    imageStore?: Map<string, string>;
     onProgress?: (step: string, current?: number, total?: number) => void;
 }
 
 export async function publishToLark(config: PublishConfig): Promise<string> {
-    const { title, markdown, folderToken, onProgress } = config;
+    const { title, markdown, folderToken, imageStore, onProgress } = config;
 
     // Step 1: Auth
     onProgress?.('auth');
     const token = await getLarkToken();
 
-    // Step 2: Parse markdown → Lark blocks (skip base64 images)
-    onProgress?.('images', 0, 0);
-    const blocks = markdownToLarkBlocks(markdown);
-    console.log(`[Lark] Parsed ${blocks.length} blocks from markdown`);
+    // Step 2: Parse markdown → Lark blocks (images become placeholders)
+    const rawBlocks = markdownToLarkBlocks(markdown);
+    console.log(`[Lark] Parsed ${rawBlocks.length} blocks from markdown`);
 
     // Step 3: Create document
     onProgress?.('publishing');
     const documentId = await createDocument(token, title, folderToken);
 
-    // Step 4: Insert blocks
+    // Step 4: Upload images and resolve placeholders
+    onProgress?.('images', 0, 0);
+    const blocks = await resolveImageBlocks(
+        token, documentId, rawBlocks,
+        imageStore ?? new Map(),
+        (uploaded, total) => onProgress?.('images', uploaded, total),
+    );
+
+    // Step 5: Insert blocks
     await insertBlocks(token, documentId, blocks);
 
-    // Step 5: Get the correct workspace URL
+    // Step 6: Get the correct workspace URL
     return await getDocumentUrl(token, documentId);
 }

@@ -202,6 +202,8 @@ export default function App() {
                     onRemoveCard={removeCard}
                     onDuplicateCard={duplicateCard}
                     onOpenSingle={handleOpenSingleFromCard}
+                    onOpenSettings={() => setIsTranslateSettingsOpen(true)}
+                    onOpenUsage={() => setIsUsageOpen(true)}
                 />
             )}
 

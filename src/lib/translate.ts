@@ -97,22 +97,50 @@ async function callTranslateAPI(text: string): Promise<string> {
     }
 }
 
-// ── Code protection helpers ──────────────────────────────────────
 function protectCodeBlocks(content: string): { protected: string; map: Map<string, string> } {
     const map = new Map<string, string>();
     let counter = 0;
-    let result = content.replace(/(`{3,}|~{3,})([\s\S]*?)\1/g, (_match) => {
+
+    let result = content;
+
+    // ── Protect fenced code blocks ``` or ~~~
+    result = result.replace(/(`{3,}|~{3,})([\s\S]*?)\1/g, (_match) => {
         const key = `[CODE_BLOCK_${counter++}]`;
         map.set(key, _match);
         return key;
     });
+
+    // ── Protect inline code `...`
     result = result.replace(/`([^`\n]+)`/g, (_match) => {
         const key = `[INLINE_CODE_${counter++}]`;
         map.set(key, _match);
         return key;
     });
+
+    // ── Protect img:// references (custom image store refs)
+    result = result.replace(/\(img:\/\/[^)\s]+\)/g, (_match) => {
+        const key = `[IMG_REF_${counter++}]`;
+        map.set(key, _match);
+        return key;
+    });
+
+    // ── Protect markdown images with data: URLs ![...](data:...)
+    result = result.replace(/!\[[^\]]*\]\(data:[^)]+\)/g, (_match) => {
+        const key = `[DATA_IMG_${counter++}]`;
+        map.set(key, _match);
+        return key;
+    });
+
+    // ── Protect bare img://... tokens that appear without parens
+    result = result.replace(/img:\/\/[^\s)\]"']+/g, (_match) => {
+        const key = `[IMG_BARE_${counter++}]`;
+        map.set(key, _match);
+        return key;
+    });
+
     return { protected: result, map };
 }
+
 
 function restoreCodeBlocks(content: string, map: Map<string, string>): string {
     let result = content;
@@ -146,13 +174,13 @@ export async function translateMarkdown(
     if (!content.trim()) return content;
     const { protected: protectedContent, map: codeMap } = protectCodeBlocks(content);
     const chunks = splitIntoChunks(protectedContent);
-    const translatedChunks: string[] = [];
-    for (let i = 0; i < chunks.length; i++) {
-        onProgress?.(i + 1, chunks.length);
-        const translated = await callTranslateAPI(chunks[i]);
-        const cleaned = translated.replace(/^```(?:markdown)?\n?/, '').replace(/\n?```$/, '');
-        translatedChunks.push(cleaned);
-    }
+    const translatedChunks = await Promise.all(
+        chunks.map(async (chunk, i) => {
+            onProgress?.(i + 1, chunks.length);
+            const translated = await callTranslateAPI(chunk);
+            return translated.replace(/^```(?:markdown)?\n?/, '').replace(/\n?```$/, '');
+        })
+    );
     const joined = translatedChunks.join('\n\n');
     const result = restoreCodeBlocks(joined, codeMap);
 

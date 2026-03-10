@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Upload, CheckCircle2, Loader2, ExternalLink, AlertTriangle, Globe, Bookmark, Plus, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getLarkToken, markdownToLarkBlocks } from '../lib/larkPublish';
+import { getLarkToken, markdownToLarkBlocks, resolveImageBlocks } from '../lib/larkPublish';
 import { resolveSpaceId, moveDocToWiki } from '../lib/larkWiki';
+import { getAllImages } from '../lib/imageStore';
 import { THEMES } from '../lib/themes';
+import { appendLog } from '../lib/cardLog';
 
 const LARK_BASE = '/lark-api';
 const STORAGE_KEY = 'lark_saved_wikis';
@@ -96,8 +98,7 @@ async function insertBlocksIntoDoc(token: string, documentId: string, blocks: un
                                 property: {
                                     row_size: tableRows.length,
                                     column_size: colSize,
-                                    // Distribute columns evenly across ~520px content width
-                                    column_widths: Array(colSize).fill(Math.floor(520 / colSize)),
+                                    // Note: column_widths removed — not accepted by all Lark versions
                                 },
                             },
                         }],
@@ -157,13 +158,139 @@ async function insertBlocksIntoDoc(token: string, documentId: string, blocks: un
         }
 
 
+        // ── Pre-uploaded Lark image token (_larkToken) ────────────
+        // Try inserting image block directly with the token embedded.
+        if (block._larkToken !== undefined) {
+            const larkFileToken = block._larkToken as string;
+            console.log('[Lark] attempting direct insert for larkToken:', larkFileToken);
+
+            const imgBlock = { block_type: 27, image: { token: larkFileToken } };
+            const directRes = await fetch(
+                `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+                {
+                    method: 'POST', headers,
+                    body: JSON.stringify({ children: [imgBlock], index: indexOffset }),
+                }
+            );
+            const directData = await safeJson<{ code: number; msg: string; data?: unknown }>(directRes);
+            console.log('[Lark] direct image insert result:', JSON.stringify(directData));
+
+            if (directData.code === 0) {
+                indexOffset++;
+            } else {
+                // Fallback: text reference
+                console.warn('[Lark] Direct image insert failed code:', directData.code, 'token:', larkFileToken);
+                const textFallback = {
+                    block_type: 2,
+                    text: { elements: [{ text_run: { content: `[🖼️ img:${larkFileToken.slice(0, 8)}…]` } }], style: {} },
+                };
+                const fbRes = await fetch(
+                    `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+                    { method: 'POST', headers, body: JSON.stringify({ children: [textFallback], index: indexOffset }) }
+                );
+                const fbData = await safeJson<{ code: number; msg: string }>(fbRes);
+                if (fbData.code === 0) indexOffset++;
+            }
+
+            i++;
+            continue;
+        }
+
+        // ── Image placeholder (_imageSrc): 3-step Lark flow ──────
+        // Lark requires: (1) create empty image block → get block_id
+        //                (2) upload media with parent_node = block_id
+        //                Lark auto-associates the file token.
+        if (block._imageSrc !== undefined) {
+            const src = block._imageSrc as string;
+            const alt = (block._imageAlt as string) || 'image';
+
+            if (!src.startsWith('data:')) {
+                // External URL — insert as text link instead
+                const textBlock = {
+                    block_type: 2,
+                    text: { elements: [{ text_run: { content: `[🖼️ ${alt}](${src})` } }], style: {} },
+                };
+                const res = await fetch(
+                    `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+                    { method: 'POST', headers, body: JSON.stringify({ children: [textBlock], index: indexOffset }) }
+                );
+                const data = await safeJson<{ code: number; msg: string }>(res);
+                if (data.code !== 0) throw new Error(`Insert image link failed: ${data.msg} (code ${data.code})`);
+                indexOffset++; i++;
+                continue;
+            }
+
+            // Step 1: Create empty image block → get its block_id
+            const createRes = await fetch(
+                `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+                {
+                    method: 'POST', headers,
+                    body: JSON.stringify({
+                        children: [{ block_type: 27, image: {} }],
+                        index: indexOffset,
+                    }),
+                }
+            );
+            const createData = await safeJson<{ code: number; msg: string; data?: { children?: { block_id: string }[] } }>(createRes);
+            console.log('[Lark] create empty image block:', createData);
+            if (createData.code !== 0) throw new Error(`Create image block failed: ${createData.msg} (code ${createData.code})`);
+            const imgBlockId = createData.data?.children?.[0]?.block_id;
+            if (!imgBlockId) throw new Error('Create image block returned no block_id');
+            indexOffset++;
+
+            // Small delay before next block operation
+            await new Promise(r => setTimeout(r, 300));
+
+            // Step 2: Upload media with parent_node = imgBlockId
+            const { uploadImageToLark } = await import('../lib/larkPublish');
+            const fileToken = await uploadImageToLark(token, imgBlockId, src);
+            console.log('[Lark] upload image result:', { fileToken, imgBlockId });
+
+            if (fileToken) {
+                // Step 3: PATCH the image block with the file_token to display the image
+                // Lark block update API requires document_revision_id=-1
+                const patchRes = await fetch(
+                    `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${imgBlockId}?document_revision_id=-1`,
+                    {
+                        method: 'PATCH', headers,
+                        body: JSON.stringify({ replace_image: { token: fileToken } }),
+                    }
+                );
+                const patchData = await safeJson<{ code: number; msg: string; data?: unknown }>(patchRes);
+                console.log('[Lark] PATCH image block result (full):', JSON.stringify(patchData));
+                if (patchData.code !== 0) {
+                    console.warn('[Lark] PATCH image token failed:', patchData.code, patchData.msg);
+                }
+            } else {
+                console.warn('[Lark] Image upload returned no file_token for block', imgBlockId);
+            }
+
+            i++;
+            continue;
+        }
+
+        // ── Image block (block_type 27) already resolved — insert individually ──
+        const blockRec = blocks[i] as Record<string, unknown>;
+        if (blockRec.block_type === 27) {
+            const res = await fetch(
+                `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+                { method: 'POST', headers, body: JSON.stringify({ children: [blockRec], index: indexOffset }) }
+            );
+            const data = await safeJson<{ code: number; msg: string }>(res);
+            console.log('[Lark] insertImage block:', data);
+            if (data.code !== 0) throw new Error(`Insert image block failed: ${data.msg} (code ${data.code})`);
+            indexOffset++;
+            i++;
+            continue;
+        }
+
         // ── Regular blocks: batch ────────────────────────────────
         const batchEnd = Math.min(i + CHUNK, blocks.length);
-        // Collect only non-table blocks in this window
+        // Collect only non-table, non-image blocks in this window
         const regularChunk: unknown[] = [];
         for (let j = i; j < batchEnd; j++) {
             const b = blocks[j] as Record<string, unknown>;
-            if (b._tableRows) break; // stop before next table
+            if (b._tableRows || b._larkToken !== undefined || b._imageSrc !== undefined || b.block_type === 27) break;
             regularChunk.push(b);
         }
         if (regularChunk.length === 0) { i++; continue; }
@@ -180,16 +307,27 @@ async function insertBlocksIntoDoc(token: string, documentId: string, blocks: un
 }
 
 
-type Step = 'idle' | 'auth' | 'publishing' | 'done' | 'error';
+type Step = 'idle' | 'auth' | 'images' | 'publishing' | 'done' | 'error';
+
+export type PublishConfig = {
+    title: string;
+    wikiEnabled: boolean;
+    wikiSpaceId: string;
+    wikiNodeToken: string;
+};
 
 interface Props {
     isOpen: boolean;
     onClose: () => void;
     markdownInput: string;
     activeTheme?: string;
+    cardId?: string;
+    cardTitle?: string;
+    /** When provided, clicking Đăng closes the dialog and fires this callback for background publish */
+    onPublishStarted?: (config: PublishConfig) => void;
 }
 
-export default function LarkPublishDialog({ isOpen, onClose, markdownInput, activeTheme }: Props) {
+export default function LarkPublishDialog({ isOpen, onClose, markdownInput, activeTheme, cardId, cardTitle, onPublishStarted }: Props) {
     // Extract accent hex from theme's `strong` style (e.g. `color: #b75c3d !important`)
     const accentHex = (() => {
         const theme = THEMES.find(t => t.id === activeTheme);
@@ -269,11 +407,40 @@ export default function LarkPublishDialog({ isOpen, onClose, markdownInput, acti
     };
 
     const handlePublish = async () => {
+        // Background mode: close dialog, fire callback, let parent handle publish
+        if (onPublishStarted) {
+            const cfg: PublishConfig = {
+                title: title || extractTitle(markdownInput),
+                wikiEnabled,
+                wikiSpaceId: wikiSpaceId.trim(),
+                wikiNodeToken: wikiNodeToken.trim(),
+            };
+            onClose();
+            onPublishStarted(cfg);
+            return;
+        }
+        // Single mode: original in-dialog flow
         setStep('auth'); setErrorMsg('');
+        const t0 = Date.now();
         try {
             const token = await getLarkToken();
             const docTitle = title || extractTitle(markdownInput);
             const blocks = markdownToLarkBlocks(markdownInput, accentHex);
+            const larkImageStore = getAllImages();
+
+            // ── Pre-publish: warn about unresolved img:// refs ──────
+            const unresolvedImgKeys = [...markdownInput.matchAll(/\(img:\/\/([^)]+)\)/g)]
+                .map(m => m[1])
+                .filter(key => !larkImageStore.has(key));
+            if (unresolvedImgKeys.length > 0) {
+                const proceed = window.confirm(
+                    `⚠️ Có ${unresolvedImgKeys.length} ảnh dùng img:// ref từ phiên trước không còn data.\n\n` +
+                    `Các ảnh này sẽ bị bỏ qua khi đăng lên Lark.\n\n` +
+                    `Để đăng ảnh đúng: kéo thả lại file ảnh vào nút "Tải ảnh" trước khi publish.\n\n` +
+                    `Tiếp tục publish không có ảnh?`
+                );
+                if (!proceed) { setStep('idle'); return; }
+            }
 
             setStep('publishing');
 
@@ -294,7 +461,12 @@ export default function LarkPublishDialog({ isOpen, onClose, markdownInput, acti
                 }
                 const docId = createData.data.document.document_id;
 
-                await insertBlocksIntoDoc(token, docId, blocks);
+                setStep('images');
+                const resolvedBlocks = await resolveImageBlocks(
+                    token, docId, blocks, larkImageStore,
+                );
+
+                await insertBlocksIntoDoc(token, docId, resolvedBlocks);
 
                 const { url: wikiUrl, wikiToken } = await moveDocToWiki(
                     token, resolvedSpaceId, docId, parentWikiToken,
@@ -313,19 +485,38 @@ export default function LarkPublishDialog({ isOpen, onClose, markdownInput, acti
                 }
             } else {
                 const { publishToLark } = await import('../lib/larkPublish');
-                docUrl = await publishToLark({ title: docTitle, markdown: markdownInput });
+                docUrl = await publishToLark({ title: docTitle, markdown: markdownInput, imageStore: larkImageStore });
             }
 
             setResultUrl(docUrl);
             setStep('done');
+            appendLog({
+                cardId: cardId ?? 'single',
+                cardTitle: (cardTitle ?? title) || 'Single Mode',
+                type: 'lark_publish',
+                timestamp: new Date().toISOString(),
+                durationMs: Date.now() - t0,
+                larkUrl: docUrl,
+                success: true,
+            });
         } catch (e) {
             setErrorMsg(e instanceof Error ? e.message : String(e));
             setStep('error');
+            appendLog({
+                cardId: cardId ?? 'single',
+                cardTitle: (cardTitle ?? title) || 'Single Mode',
+                type: 'lark_publish',
+                timestamp: new Date().toISOString(),
+                durationMs: Date.now() - t0,
+                success: false,
+                errorMsg: e instanceof Error ? e.message : String(e),
+            });
         }
     };
 
     const statusLabel: Record<Step, string> = {
-        idle: '', auth: 'Đang xác thực...', publishing: 'Đang tạo tài liệu...',
+        idle: '', auth: 'Đang xác thực...', images: 'Đang upload ảnh lên Lark...',
+        publishing: 'Đang tạo tài liệu...',
         done: 'Đăng thành công!', error: 'Đăng thất bại',
     };
 

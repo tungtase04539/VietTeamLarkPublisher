@@ -1,0 +1,24 @@
+appId: com.raphael.publish
+productName: Raphael Publish
+copyright: Raphael Publish 2025
+forceCodeSigning: false
+
+# Correct entry point (overrides package.json for the packaged app)
+extraMetadata:
+  main: electron/main.cjs
+
+# Files to include in asar
+files:
+  - dist/**
+  - electron/**
+  - package.json
+
+# Output directory (separate from Vite dist/)
+directories:
+  output: dist-electron
+  buildResources: public
+
+win:
+  target:
+    - target: dir
+      arch: x64

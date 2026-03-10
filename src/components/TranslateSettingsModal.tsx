@@ -136,9 +136,14 @@ export default function TranslateSettingsModal({ isOpen, onClose }: Props) {
                                 )}
 
                                 {/* Regular API Key */}
-                                {settings.provider !== '302ai' && !isDefaultGemini && (
+                                {settings.provider !== '302ai' && (
                                     <div className="space-y-1.5">
-                                        <label className="text-[12px] font-medium text-[#86868b] uppercase tracking-wide">API Key</label>
+                                        <label className="text-[12px] font-medium text-[#86868b] uppercase tracking-wide flex items-center gap-2">
+                                            Gemini API Key
+                                            {isDefaultGemini && (
+                                                <span className="normal-case font-normal text-[#34c759] text-[11px]">• để trống = dùng key tích hợp sẵn</span>
+                                            )}
+                                        </label>
                                         <input type="password" value={settings.apiKey} onChange={e => up('apiKey', e.target.value)}
                                             placeholder={apiPlaceholder}
                                             className="w-full bg-[#f5f5f7] dark:bg-[#2c2c2e] border-0 rounded-xl px-4 py-3 text-[14px] text-[#1d1d1f] dark:text-[#f5f5f7] focus:outline-none focus:ring-2 focus:ring-[#0066cc]/30 placeholder-[#86868b] font-mono" />
