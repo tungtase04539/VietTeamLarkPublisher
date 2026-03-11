@@ -1,0 +1,154 @@
+# 直播总结 | OpenClaw技术架构拆解，带你手搓一个最小的龙虾
+
+2月24日晚上，我们邀请到了 Share AI 的来新璐，一起拆解了 OpenClaw 的技术架构，并带大家手搓了一个最小的龙虾。
+
+这次直播有个非常戏剧性的效果，中间来新璐顺手让小龙虾打了个 FaceTime 给直播间网友，折腾一阵之后真的打通了，对方直接被拉进来做了即兴连线。
+
+![Image Token: UeyybKT7HonyhxxptFzcogFinId](images/UeyybKT7HonyhxxptFzcogFinId.jpeg)
+
+另一个是直播快结束的时候，他让小龙虾"退出飞书应用"，结果直播就这么被龙虾亲手下播了，节目效果直接拉满。
+
+![Image Token: UllBbJcSxoRlVDxge7acO3NEn7b](images/UllBbJcSxoRlVDxge7acO3NEn7b.png)
+
+来新璐是位00后，之前自己做过 Kode agent，拆解过 Claude Code。这次他带着一个专门为直播准备的开源教学仓库 Claw 0 来，把小龙虾的技术架构一层层剥开给大家看。
+
+结论很简单：**小龙虾 = Claude Code + 定时器 + 自己没事给自己找事干。**
+
+就这两个机制，让它从一个被动式的工具变成了一个**主动运转的个人 AI 助手**。
+
+![Image Token: L188bm9Buo2MgvxfpHocYVGZnYg](images/L188bm9Buo2MgvxfpHocYVGZnYg.png)
+
+### 1. OpenClaw 到底是什么来的
+
+先说背景。
+
+去年2月 Claude Code 发布，3月 Manus 出现，到去年11月开始有大量非程序员用户涌进来。在这段时间里，开源社区随之爆发，冒出一堆 agent 项目，OpenClaw 是其中跑得最快的一个。
+
+它本来叫 Clawdbot，后来因为收到 Anthropic 的律师函改成了 Moltbot，最后定名 OpenClaw，也就是大家现在说的「小龙虾」。
+
+截至直播当晚，这个项目在 GitHub 上的 star 数已经超过20万，**是 GitHub 历史上增速最快的开源项目之一。**
+
+OpenClaw 的核心 agent 部分，用的是一个叫 Pi agent 的框架。这个框架本质上极简：不到150行代码，定义了 bash、read、write、edit 这几个工具，就能跑起来一个可工作的 agent。
+
+**真正让 OpenClaw 与众不同的，不是 agent 本身，而是套在 agent 外面的那几个机制。**
+
+![Image Token: WI7Jbvz7Wo9QwgxGQGKc5lEwnqh](images/WI7Jbvz7Wo9QwgxGQGKc5lEwnqh.png)
+
+Ps：上面的图是AJ用龙虾+Skill跑出来的，后面也会分享这套提示词，感兴趣的小伙伴可以蹲蹲\~
+
+### 2. 拆解三个核心机制
+
+**定时任务（Cron）**
+
+这个机制就是让 agent 可以给自己安排定时任务。
+
+支持三种模式：**一次性执行（比如明天下午3点提醒我开直播）、周期性执行（比如每天早上10点给我一个惊喜）、以及标准的 Cron 表达式。**
+
+关键在于，这些任务不只是用户可以设置，agent 自己也可以主动添加。
+
+比如 agent 可以给自己安排每天晚上12点去扫一遍某个开源仓库的 issues，然后第二天有人问它的时候，它已经提前备好资料了。
+
+![Image Token: KjbFbmOpvo6Cdzx5RXYc1CtGn2f](images/KjbFbmOpvo6Cdzx5RXYc1CtGn2f.png)
+
+**心跳（Heartbeat）**
+
+这是最有意思的机制，也是让小龙虾显得"有生命"的原因。
+
+一句话解释：**每隔30秒，系统自动给 agent 发一条消息，让它检查一下有没有事情可以做。**
+
+消息的内容来自一个 heartbeat.md 文件，里面记着待办任务和周期性提醒。agent 看完，有事就去做，没事就返回一个特定关键词，系统收到就不打扰你。
+
+和 Claude Code 的本质区别就在这里，Claude Code 是踹一下动一下，OpenClaw 是自己隔30秒醒一次，看看有没有活干。
+
+![Image Token: JvYwbAMi4oOSN0xETHocTW24nzg](images/JvYwbAMi4oOSN0xETHocTW24nzg.png)
+
+**Soul（灵魂）**
+
+大家说小龙虾"有灵魂"，这个概念听起来很玄。
+
+但实际上，所谓灵魂，就是把系统提示词里那一块，关于"agent 是谁、行为风格是什么"的内容，单独抽出来，存成一个 soul.md 文件。
+
+和 skill 的逻辑一模一样。以前每次要手动粘贴一大段 prompt 告诉 AI 怎么干事，现在把它固定成 .md 文件，agent 启动时自动读取。**Soul 就是这个思路用在人格设定上的版本。**
+
+所以你可以在社区里分享你的 soul.md，别人下载下来，agent 就有了你调好的风格。"传播灵魂"说的就是这件事。
+
+![Image Token: X98UbFqt3oXRw8xb074cY8nBnzh](images/X98UbFqt3oXRw8xb074cY8nBnzh.png)
+
+### 3. 直播现场发生了什么
+
+**agent 在直播中悄悄完成了翻译任务**
+
+直播进行了大约20分钟，来新璐把他今天准备的教学仓库 Claw 0 的 GitHub 页面拉出来给大家看。
+
+然后发现，他开播之前交给 agent 的一个任务已经完成了：**把教学文档翻译成英语和日语，然后推送到仓库里。**
+
+直播开始前，仓库只有中文版本的文件夹。20多分钟后，刷新页面，英语和日语两个版本的文件夹已经静静地出现在那里。
+
+"我都没注意，它在后台自己干完了，直接提交了。"
+
+WaytoAGI 社区在日本、新加坡都有很多朋友。小龙虾顺手把多语言版本搞定这件事，是本地部署最直观的价值体现。
+
+![Image Token: QkVUbgKDOowunexuZybchsxjnNg](images/QkVUbgKDOowunexuZybchsxjnNg.png)
+
+**一周5000个 commit**
+
+来新璐拉了 OpenClaw 的最新代码，**跟一周前对比，多了将近5000个 commit。**
+
+换算一下：一家公司的工程师，平均每天提交十几到二十个 commit，连续干一年，才能积累5000个，而这个项目一周就到了。
+
+"这个项目99%是非人类在更新。"
+
+项目作者 Kidd 肯定 review 不过来，大概率是让 agent 简单看一眼就 merge 了。这也解释了为什么最近不少用户遇到莫名其妙的 bug，过一两周更新一次通常就好了。
+
+![Image Token: ObiFbPlnWoj6loxmnPWcy557nIb](images/ObiFbPlnWoj6loxmnPWcy557nIb.png)
+
+**用小龙虾打 FaceTime 连线网友**
+
+这是当晚最有节目效果的环节。
+
+来新璐想测试小龙虾能不能控制电脑打电话。他让 agent 给一位直播间网友打 FaceTime，发了一条消息，然后看着屏幕，FaceTime 应用窗口弹出来了，自动填入了对方号码，电话真的拨出去了！
+
+网友陆萌接通后，被拉进直播做了一次即兴连线，当场向大家拜了个开春，AJ 说下次可以用这种方式连线了。
+
+来新璐自己也没想到真的能成。**打电话这件事，agent 是靠 FaceTime 的命令行参数直接操作的，驱动它的是智谱的 GLM 模型，没有配置任何浏览器 MCP。**
+
+![Image Token: ONrQbdIjSom3SDxpptmcHaXhnjT](images/ONrQbdIjSom3SDxpptmcHaXhnjT.png)
+
+### 4. 几个值得记住的判断
+
+**本地部署 vs. 云端部署，差距很大。**
+
+来新璐两周前在云服务器上部署过一版小龙虾，用了一段时间后放弃了。
+
+把它部署在云服务器上，和用 Manus 基本没有区别。上面没有你的本地数据，没有你的文件，能干的事非常有限。
+
+部署在本地电脑上就是另一回事了。
+
+它可以读你桌面上的所有文件，帮你清理磁盘、调整电池策略、找某个文件发给你，这些是云端做不到的。
+
+**当然，权限越大，风险越大。**
+
+有次让 agent "继续干你所有能干的事"，结果它在清理磁盘的时候，差点把给甲方客户用的数据资料也删了。
+
+"你安全做得越好，小龙虾能干的事就越少；你安全做得越松，你不知道模型会不会干点意外的事情。"
+
+![Image Token: UmZObQ5XbowJYdxlbdCcRxqQnyf](images/UmZObQ5XbowJYdxlbdCcRxqQnyf.png)
+
+**关于用哪个模型跑龙虾。**
+
+来新璐的建议是尽量用 Claude，驱动 agent 做复杂任务，模型能力的差距非常明显。
+
+国产模型也能跑，但他用某国产模型清理磁盘，agent 明明记录了每项清理了多少空间，最后汇报可用空间时却算错了，从原来的25G越算越小，变成了21G。
+
+不过如果只是用来跑通流程、熟悉机制，国产模型的 coding plan 是够用的。
+
+而且现在很多人都有 Claude Cod的订阅，可以把 agent core 那部分替换成 Claude Code CLI，复用订阅而不走 API 付费，成本更低。
+
+![Image Token: ERn9bJTHCos1DzxEnK0cVmUSnHc](images/ERn9bJTHCos1DzxEnK0cVmUSnHc.png)
+
+看完这场，你会发现小龙虾没有那么神秘，但也不是说随便让它干就能干好。
+
+它的能力边界，**和你给它配了什么工具、用什么模型、部署在哪里，关系都很大。**
+
+现在最合适的姿势，可能就是先把它部署在自己的电脑上，把它当一个随时在后台帮你盯着事情、没事给自己找事干的搭档用起来，然后慢慢往上加扩展。
+

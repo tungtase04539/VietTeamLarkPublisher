@@ -110,7 +110,7 @@ async function insertBlocksIntoDoc(token: string, documentId: string, blocks: un
 
             try {
                 // Step A: create table block — minimal params only (Lark auto-creates cells)
-                const tableRes = await fetch(
+                const tableRes = await fetchWithRetry(
                     `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
                     {
                         method: 'POST', headers,
@@ -121,7 +121,6 @@ async function insertBlocksIntoDoc(token: string, documentId: string, blocks: un
                                     property: {
                                         row_size: tableRows.length,
                                         column_size: colSize,
-                                        // Note: column_widths removed — not accepted by all Lark versions
                                     },
                                 },
                             }],
@@ -132,13 +131,12 @@ async function insertBlocksIntoDoc(token: string, documentId: string, blocks: un
                 const tableData = await safeJson<LarkBlockResponse>(tableRes);
                 if (tableData.code !== 0) throw new Error(`Create table failed: ${tableData.msg} (code ${tableData.code})`);
                 const tableBlockId = tableData.data?.children?.[0]?.block_id ?? '';
-                // Cell IDs come directly from the table creation response
                 let cellIds: string[] = tableData.data?.children?.[0]?.table?.cells ?? [];
                 indexOffset++;
 
                 // Fallback: GET table children if cells array is empty
                 if (cellIds.length === 0 && tableBlockId) {
-                    const cellsRes = await fetch(
+                    const cellsRes = await fetchWithRetry(
                         `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${tableBlockId}/children`,
                         { headers }
                     );
@@ -150,49 +148,62 @@ async function insertBlocksIntoDoc(token: string, documentId: string, blocks: un
                 }
                 console.log('[Lark Table] cell IDs:', cellIds);
 
-                // Step C: insert text into each cell with retry on 429
-                const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+                // Step C: insert text into each cell with retry and truncation
+                const CELL_MAX = 10000;
                 for (let r = 0; r < tableRows.length; r++) {
                     for (let c = 0; c < colSize; c++) {
-                        const cellText = tableRows[r]?.[c] ?? '';
+                        let cellText = tableRows[r]?.[c] ?? '';
                         const cellBlockId = cellIds[r * colSize + c];
                         if (!cellBlockId || !cellText) { await delay(80); continue; }
-
-                        const doInsert = async () => fetch(
-                            `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${cellBlockId}/children`,
-                            {
-                                method: 'POST', headers,
-                                body: JSON.stringify({
-                                    children: [{ block_type: 2, text: { elements: [{ text_run: { content: cellText } }], style: {} } }],
-                                    index: 0,
-                                }),
+                        // Truncate oversized cell text
+                        if (cellText.length > CELL_MAX) {
+                            cellText = cellText.slice(0, CELL_MAX) + '…(truncated)';
+                        }
+                        try {
+                            const doInsert = async () => fetchWithRetry(
+                                `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${cellBlockId}/children`,
+                                {
+                                    method: 'POST', headers,
+                                    body: JSON.stringify({
+                                        children: [{ block_type: 2, text: { elements: [{ text_run: { content: cellText } }], style: {} } }],
+                                        index: 0,
+                                    }),
+                                }
+                            );
+                            const txtRes = await doInsert();
+                            const txtData = await safeJson<{ code: number; msg: string }>(txtRes);
+                            if (txtData.code !== 0) {
+                                console.warn(`[Lark] Cell [${r},${c}] text insert failed (code ${txtData.code}), skipping`);
                             }
-                        );
-                        let txtRes = await doInsert();
-                        // Retry once on 429
-                        if (txtRes.status === 429) { await delay(1500); txtRes = await doInsert(); }
-                        const txtData = await safeJson<{ code: number; msg: string }>(txtRes);
-                        if (txtData.code !== 0) throw new Error(`Insert cell text failed: ${txtData.msg} (code ${txtData.code})`);
-                        await delay(150); // throttle between cells
+                        } catch (cellErr) {
+                            console.warn(`[Lark] Cell [${r},${c}] error, skipping:`, cellErr);
+                        }
+                        await delay(150);
                     }
                 }
             } catch (tableErr) {
                 // Fallback: render table as plain text paragraphs
                 console.warn('[Lark] Table insertion failed, falling back to text:', tableErr);
+                const ROW_MAX = 5000;
                 for (const row of tableRows) {
-                    const rowText = '| ' + row.join(' | ') + ' |';
-                    const fbRes = await fetch(
-                        `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
-                        {
-                            method: 'POST', headers,
-                            body: JSON.stringify({
-                                children: [{ block_type: 2, text: { elements: [{ text_run: { content: rowText } }], style: {} } }],
-                                index: indexOffset,
-                            }),
-                        }
-                    );
-                    const fbData = await safeJson<{ code: number; msg: string }>(fbRes);
-                    if (fbData.code === 0) indexOffset++;
+                    let rowText = '| ' + row.join(' | ') + ' |';
+                    if (rowText.length > ROW_MAX) rowText = rowText.slice(0, ROW_MAX) + '…|';
+                    try {
+                        const fbRes = await fetchWithRetry(
+                            `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+                            {
+                                method: 'POST', headers,
+                                body: JSON.stringify({
+                                    children: [{ block_type: 2, text: { elements: [{ text_run: { content: rowText } }], style: {} } }],
+                                    index: indexOffset,
+                                }),
+                            }
+                        );
+                        const fbData = await safeJson<{ code: number; msg: string }>(fbRes);
+                        if (fbData.code === 0) indexOffset++;
+                    } catch (fbErr) {
+                        console.warn('[Lark] Table fallback row error, skipping:', fbErr);
+                    }
                 }
             }
             i++;

@@ -72,7 +72,7 @@ export async function insertBlocksIntoDoc(token: string, documentId: string, blo
             }
 
             try {
-                const tableRes = await fetch(
+                const tableRes = await fetchWithRetry(
                     `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
                     {
                         method: 'POST', headers,
@@ -89,7 +89,7 @@ export async function insertBlocksIntoDoc(token: string, documentId: string, blo
                 indexOffset++;
 
                 if (cellIds.length === 0 && tableBlockId) {
-                    const cellsRes = await fetch(
+                    const cellsRes = await fetchWithRetry(
                         `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${tableBlockId}/children`,
                         { headers }
                     );
@@ -97,43 +97,58 @@ export async function insertBlocksIntoDoc(token: string, documentId: string, blo
                     cellIds = (cellsData.data?.children ?? []).filter(b => b.block_type === 32).map(b => b.block_id);
                 }
 
-                const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+                const CELL_MAX = 10000; // Lark rejects very long cell text
                 for (let r = 0; r < tableRows.length; r++) {
                     for (let c = 0; c < colSize; c++) {
-                        const cellText = tableRows[r]?.[c] ?? '';
+                        let cellText = tableRows[r]?.[c] ?? '';
                         const cellBlockId = cellIds[r * colSize + c];
                         if (!cellBlockId || !cellText) { await delay(80); continue; }
-                        const doInsert = async () => fetch(
-                            `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${cellBlockId}/children`,
-                            {
-                                method: 'POST', headers,
-                                body: JSON.stringify({ children: [{ block_type: 2, text: { elements: [{ text_run: { content: cellText } }], style: {} } }], index: 0 }),
+                        // Truncate oversized cell text
+                        if (cellText.length > CELL_MAX) {
+                            cellText = cellText.slice(0, CELL_MAX) + '…(truncated)';
+                        }
+                        try {
+                            const doInsert = async () => fetchWithRetry(
+                                `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${cellBlockId}/children`,
+                                {
+                                    method: 'POST', headers,
+                                    body: JSON.stringify({ children: [{ block_type: 2, text: { elements: [{ text_run: { content: cellText } }], style: {} } }], index: 0 }),
+                                }
+                            );
+                            const txtRes = await doInsert();
+                            const txtData = await safeJson<{ code: number; msg: string }>(txtRes);
+                            if (txtData.code !== 0) {
+                                console.warn(`[Lark] Cell [${r},${c}] text insert failed (code ${txtData.code}), skipping`);
                             }
-                        );
-                        let txtRes = await doInsert();
-                        if (txtRes.status === 429) { await delay(1500); txtRes = await doInsert(); }
-                        const txtData = await safeJson<{ code: number; msg: string }>(txtRes);
-                        if (txtData.code !== 0) throw new Error(`Insert cell text failed: ${txtData.msg} (code ${txtData.code})`);
+                        } catch (cellErr) {
+                            console.warn(`[Lark] Cell [${r},${c}] error, skipping:`, cellErr);
+                        }
                         await delay(150);
                     }
                 }
             } catch (tableErr) {
                 // Fallback: render table as plain text paragraphs
                 console.warn('[Lark] Table insertion failed, falling back to text:', tableErr);
+                const ROW_MAX = 5000; // limit fallback row text length
                 for (const row of tableRows) {
-                    const rowText = '| ' + row.join(' | ') + ' |';
-                    const fbRes = await fetch(
-                        `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
-                        {
-                            method: 'POST', headers,
-                            body: JSON.stringify({
-                                children: [{ block_type: 2, text: { elements: [{ text_run: { content: rowText } }], style: {} } }],
-                                index: indexOffset,
-                            }),
-                        }
-                    );
-                    const fbData = await safeJson<{ code: number; msg: string }>(fbRes);
-                    if (fbData.code === 0) indexOffset++;
+                    let rowText = '| ' + row.join(' | ') + ' |';
+                    if (rowText.length > ROW_MAX) rowText = rowText.slice(0, ROW_MAX) + '…|';
+                    try {
+                        const fbRes = await fetchWithRetry(
+                            `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+                            {
+                                method: 'POST', headers,
+                                body: JSON.stringify({
+                                    children: [{ block_type: 2, text: { elements: [{ text_run: { content: rowText } }], style: {} } }],
+                                    index: indexOffset,
+                                }),
+                            }
+                        );
+                        const fbData = await safeJson<{ code: number; msg: string }>(fbRes);
+                        if (fbData.code === 0) indexOffset++;
+                    } catch (fbErr) {
+                        console.warn('[Lark] Table fallback row error, skipping:', fbErr);
+                    }
                 }
             }
             i++; continue;
