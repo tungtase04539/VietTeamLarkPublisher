@@ -86,71 +86,97 @@ async function insertBlocksIntoDoc(token: string, documentId: string, blocks: un
             const tableRows = block._tableRows as string[][];
             const colSize = block._colSize as number;
 
-            // Step A: create table block — minimal params only (Lark auto-creates cells)
-            const tableRes = await fetch(
-                `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
-                {
-                    method: 'POST', headers,
-                    body: JSON.stringify({
-                        children: [{
-                            block_type: 31,
-                            table: {
-                                property: {
-                                    row_size: tableRows.length,
-                                    column_size: colSize,
-                                    // Note: column_widths removed — not accepted by all Lark versions
-                                },
-                            },
-                        }],
-                        index: indexOffset,
-                    }),
-                }
-            );
-            const tableData = await safeJson<LarkBlockResponse>(tableRes);
-            if (tableData.code !== 0) throw new Error(`Create table failed: ${tableData.msg} (code ${tableData.code})`);
-            const tableBlockId = tableData.data?.children?.[0]?.block_id ?? '';
-            // Cell IDs come directly from the table creation response
-            let cellIds: string[] = tableData.data?.children?.[0]?.table?.cells ?? [];
-            indexOffset++;
-
-            // Fallback: GET table children if cells array is empty
-            if (cellIds.length === 0 && tableBlockId) {
-                const cellsRes = await fetch(
-                    `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${tableBlockId}/children`,
-                    { headers }
-                );
-                const cellsData = await safeJson<{ code: number; data?: { children?: { block_id: string; block_type: number }[] } }>(cellsRes);
-                console.log('[Lark Table] fallback GET children:', cellsData);
-                cellIds = (cellsData.data?.children ?? [])
-                    .filter(b => b.block_type === 32)
-                    .map(b => b.block_id);
+            // Validate: Lark requires row_size >= 1 and column_size >= 1
+            if (tableRows.length === 0 || colSize === 0) {
+                i++;
+                continue;
             }
-            console.log('[Lark Table] cell IDs:', cellIds);
 
-            // Step C: insert text into each cell with retry on 429
-            const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
-            for (let r = 0; r < tableRows.length; r++) {
-                for (let c = 0; c < colSize; c++) {
-                    const cellText = tableRows[r]?.[c] ?? '';
-                    const cellBlockId = cellIds[r * colSize + c];
-                    if (!cellBlockId || !cellText) { await delay(80); continue; }
+            try {
+                // Step A: create table block — minimal params only (Lark auto-creates cells)
+                const tableRes = await fetch(
+                    `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+                    {
+                        method: 'POST', headers,
+                        body: JSON.stringify({
+                            children: [{
+                                block_type: 31,
+                                table: {
+                                    property: {
+                                        row_size: tableRows.length,
+                                        column_size: colSize,
+                                        // Note: column_widths removed — not accepted by all Lark versions
+                                    },
+                                },
+                            }],
+                            index: indexOffset,
+                        }),
+                    }
+                );
+                const tableData = await safeJson<LarkBlockResponse>(tableRes);
+                if (tableData.code !== 0) throw new Error(`Create table failed: ${tableData.msg} (code ${tableData.code})`);
+                const tableBlockId = tableData.data?.children?.[0]?.block_id ?? '';
+                // Cell IDs come directly from the table creation response
+                let cellIds: string[] = tableData.data?.children?.[0]?.table?.cells ?? [];
+                indexOffset++;
 
-                    const doInsert = async () => fetch(
-                        `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${cellBlockId}/children`,
+                // Fallback: GET table children if cells array is empty
+                if (cellIds.length === 0 && tableBlockId) {
+                    const cellsRes = await fetch(
+                        `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${tableBlockId}/children`,
+                        { headers }
+                    );
+                    const cellsData = await safeJson<{ code: number; data?: { children?: { block_id: string; block_type: number }[] } }>(cellsRes);
+                    console.log('[Lark Table] fallback GET children:', cellsData);
+                    cellIds = (cellsData.data?.children ?? [])
+                        .filter(b => b.block_type === 32)
+                        .map(b => b.block_id);
+                }
+                console.log('[Lark Table] cell IDs:', cellIds);
+
+                // Step C: insert text into each cell with retry on 429
+                const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+                for (let r = 0; r < tableRows.length; r++) {
+                    for (let c = 0; c < colSize; c++) {
+                        const cellText = tableRows[r]?.[c] ?? '';
+                        const cellBlockId = cellIds[r * colSize + c];
+                        if (!cellBlockId || !cellText) { await delay(80); continue; }
+
+                        const doInsert = async () => fetch(
+                            `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${cellBlockId}/children`,
+                            {
+                                method: 'POST', headers,
+                                body: JSON.stringify({
+                                    children: [{ block_type: 2, text: { elements: [{ text_run: { content: cellText } }], style: {} } }],
+                                    index: 0,
+                                }),
+                            }
+                        );
+                        let txtRes = await doInsert();
+                        // Retry once on 429
+                        if (txtRes.status === 429) { await delay(1500); txtRes = await doInsert(); }
+                        const txtData = await safeJson<{ code: number; msg: string }>(txtRes);
+                        if (txtData.code !== 0) throw new Error(`Insert cell text failed: ${txtData.msg} (code ${txtData.code})`);
+                        await delay(150); // throttle between cells
+                    }
+                }
+            } catch (tableErr) {
+                // Fallback: render table as plain text paragraphs
+                console.warn('[Lark] Table insertion failed, falling back to text:', tableErr);
+                for (const row of tableRows) {
+                    const rowText = '| ' + row.join(' | ') + ' |';
+                    const fbRes = await fetch(
+                        `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
                         {
                             method: 'POST', headers,
                             body: JSON.stringify({
-                                children: [{ block_type: 2, text: { elements: [{ text_run: { content: cellText } }], style: {} } }],
-                                index: 0,
+                                children: [{ block_type: 2, text: { elements: [{ text_run: { content: rowText } }], style: {} } }],
+                                index: indexOffset,
                             }),
                         }
                     );
-                    let txtRes = await doInsert();
-                    // Retry once on 429
-                    if (txtRes.status === 429) { await delay(1500); txtRes = await doInsert(); }
-                    const txtData = await safeJson<{ code: number; msg: string }>(txtRes);
-                    if (txtData.code !== 0) throw new Error(`Insert cell text failed: ${txtData.msg} (code ${txtData.code})`);
-                    await delay(150); // throttle between cells
+                    const fbData = await safeJson<{ code: number; msg: string }>(fbRes);
+                    if (fbData.code === 0) indexOffset++;
                 }
             }
             i++;
@@ -196,16 +222,13 @@ async function insertBlocksIntoDoc(token: string, documentId: string, blocks: un
             continue;
         }
 
-        // ── Image placeholder (_imageSrc): 3-step Lark flow ──────
-        // Lark requires: (1) create empty image block → get block_id
-        //                (2) upload media with parent_node = block_id
-        //                Lark auto-associates the file token.
+        // ── Image placeholder (_imageSrc): upload-first approach ──────
         if (block._imageSrc !== undefined) {
             const src = block._imageSrc as string;
             const alt = (block._imageAlt as string) || 'image';
 
             if (!src.startsWith('data:')) {
-                // External URL — insert as text link instead
+                // External URL or unresolved img:// — insert as text link instead
                 const textBlock = {
                     block_type: 2,
                     text: { elements: [{ text_run: { content: `[🖼️ ${alt}](${src})` } }], style: {} },
@@ -215,54 +238,68 @@ async function insertBlocksIntoDoc(token: string, documentId: string, blocks: un
                     { method: 'POST', headers, body: JSON.stringify({ children: [textBlock], index: indexOffset }) }
                 );
                 const data = await safeJson<{ code: number; msg: string }>(res);
-                if (data.code !== 0) throw new Error(`Insert image link failed: ${data.msg} (code ${data.code})`);
-                indexOffset++; i++;
+                if (data.code === 0) indexOffset++;
+                i++;
                 continue;
             }
 
-            // Step 1: Create empty image block → get its block_id
-            const createRes = await fetch(
-                `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
-                {
-                    method: 'POST', headers,
-                    body: JSON.stringify({
-                        children: [{ block_type: 27, image: {} }],
-                        index: indexOffset,
-                    }),
-                }
-            );
-            const createData = await safeJson<{ code: number; msg: string; data?: { children?: { block_id: string }[] } }>(createRes);
-            console.log('[Lark] create empty image block:', createData);
-            if (createData.code !== 0) throw new Error(`Create image block failed: ${createData.msg} (code ${createData.code})`);
-            const imgBlockId = createData.data?.children?.[0]?.block_id;
-            if (!imgBlockId) throw new Error('Create image block returned no block_id');
-            indexOffset++;
-
-            // Small delay before next block operation
-            await new Promise(r => setTimeout(r, 300));
-
-            // Step 2: Upload media with parent_node = imgBlockId
-            const { uploadImageToLark } = await import('../lib/larkPublish');
-            const fileToken = await uploadImageToLark(token, imgBlockId, src);
-            console.log('[Lark] upload image result:', { fileToken, imgBlockId });
-
-            if (fileToken) {
-                // Step 3: PATCH the image block with the file_token to display the image
-                // Lark block update API requires document_revision_id=-1
-                const patchRes = await fetch(
-                    `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${imgBlockId}?document_revision_id=-1`,
+            // 3-step flow: create image block → upload media → PATCH token
+            try {
+                // Step 1: Create image block (with document_revision_id=-1)
+                const createRes = await fetch(
+                    `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children?document_revision_id=-1`,
                     {
-                        method: 'PATCH', headers,
-                        body: JSON.stringify({ replace_image: { token: fileToken } }),
+                        method: 'POST', headers,
+                        body: JSON.stringify({
+                            children: [{ block_type: 27, image: { token: '' } }],
+                            index: indexOffset,
+                        }),
                     }
                 );
-                const patchData = await safeJson<{ code: number; msg: string; data?: unknown }>(patchRes);
-                console.log('[Lark] PATCH image block result (full):', JSON.stringify(patchData));
-                if (patchData.code !== 0) {
-                    console.warn('[Lark] PATCH image token failed:', patchData.code, patchData.msg);
+                const createData = await safeJson<{ code: number; msg: string; data?: { children?: { block_id: string }[] } }>(createRes);
+                console.log('[Lark] create image block:', createData);
+
+                if (createData.code !== 0 || !createData.data?.children?.[0]?.block_id) {
+                    throw new Error(`Create image block failed: ${createData.msg} (code ${createData.code})`);
                 }
-            } else {
-                console.warn('[Lark] Image upload returned no file_token for block', imgBlockId);
+
+                const imgBlockId = createData.data.children[0].block_id;
+                indexOffset++;
+
+                // Small delay before next block operation
+                await new Promise(r => setTimeout(r, 300));
+
+                // Step 2: Upload media with parent_node = imgBlockId
+                const { uploadImageToLark } = await import('../lib/larkPublish');
+                const fileToken = await uploadImageToLark(token, imgBlockId, src);
+                console.log('[Lark] upload image result:', { fileToken, imgBlockId });
+
+                if (fileToken) {
+                    // Step 3: PATCH the image block with the file_token
+                    const patchRes = await fetch(
+                        `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${imgBlockId}?document_revision_id=-1`,
+                        {
+                            method: 'PATCH', headers,
+                            body: JSON.stringify({ replace_image: { token: fileToken } }),
+                        }
+                    );
+                    const patchData = await safeJson<{ code: number; msg: string; data?: unknown }>(patchRes);
+                    console.log('[Lark] PATCH image block result:', JSON.stringify(patchData));
+                    if (patchData.code !== 0) {
+                        console.warn('[Lark] PATCH image token failed:', patchData.code, patchData.msg);
+                    }
+                } else {
+                    console.warn('[Lark] Image upload returned no file_token for block', imgBlockId);
+                }
+            } catch (imgErr) {
+                console.warn('[Lark] Image insertion failed, using text fallback:', imgErr);
+                const fb = { block_type: 2, text: { elements: [{ text_run: { content: `[🖼️ ${alt}]` } }], style: {} } };
+                const fbRes = await fetch(
+                    `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+                    { method: 'POST', headers, body: JSON.stringify({ children: [fb], index: indexOffset }) }
+                );
+                const fbData = await safeJson<{ code: number; msg: string }>(fbRes);
+                if (fbData.code === 0) indexOffset++;
             }
 
             i++;
@@ -300,8 +337,28 @@ async function insertBlocksIntoDoc(token: string, documentId: string, blocks: un
             { method: 'POST', headers, body: JSON.stringify({ children: regularChunk, index: indexOffset }) }
         );
         const data = await safeJson<{ code: number; msg: string }>(res);
-        if (data.code !== 0) throw new Error(`Insert blocks failed: ${data.msg} (code ${data.code})`);
-        indexOffset += regularChunk.length;
+        if (data.code !== 0) {
+            // Batch failed — retry blocks one by one, skipping any that still fail
+            console.warn(`[Lark] Batch insert failed (code ${data.code}), retrying ${regularChunk.length} blocks individually...`);
+            for (const singleBlock of regularChunk) {
+                try {
+                    const singleRes = await fetch(
+                        `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+                        { method: 'POST', headers, body: JSON.stringify({ children: [singleBlock], index: indexOffset }) }
+                    );
+                    const singleData = await safeJson<{ code: number; msg: string }>(singleRes);
+                    if (singleData.code === 0) {
+                        indexOffset++;
+                    } else {
+                        console.warn('[Lark] Skipping invalid block:', JSON.stringify(singleBlock).slice(0, 200), singleData.msg);
+                    }
+                } catch (err) {
+                    console.warn('[Lark] Block insert error, skipping:', err);
+                }
+            }
+        } else {
+            indexOffset += regularChunk.length;
+        }
         i += regularChunk.length;
     }
 }

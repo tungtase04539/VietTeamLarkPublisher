@@ -132,9 +132,23 @@ export async function resolveImageBlocks(
     return resolved;
 }
 
+/** Decode HTML entities (&#x20; &#160; &amp; &lt; etc.) to plain characters */
+function decodeHtmlEntities(text: string): string {
+    return text
+        .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+        .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&nbsp;/g, ' ');
+}
+
 function parseInline(text: string, accentColor?: number | undefined): TextElement[] {
-    // Remove raw HTML tags
+    // Remove raw HTML tags, then decode HTML entities
     text = text.replace(/<[^>]+>/g, '');
+    text = decodeHtmlEntities(text);
     const elements: TextElement[] = [];
     // Regex for **bold**, *italic*, `code`, ~~strike~~
     const regex = /(\*\*([^*]+)\*\*)|(__([^_]+)__)|(\*([^*]+)\*)|(_([^_]+)_)|(`([^`]+)`)|(~~([^~]+)~~)|([^*_`~]+)/g;
@@ -319,16 +333,28 @@ export function markdownToLarkBlocks(markdown: string, accentHex?: string): unkn
             const tableRows: string[][] = [];
             while (i < lines.length && lines[i].startsWith('|')) {
                 const row = lines[i];
+                // Skip separator rows like |---|---|
                 if (!row.match(/^\|[\s:|-]+\|$/)) {
-                    const cells = row.split('|').slice(1, -1).map(c => c.trim());
-                    tableRows.push(cells);
+                    // Handle rows that may or may not end with |
+                    const trimmedRow = row.endsWith('|') ? row : row + '|';
+                    const cells = trimmedRow.split('|').slice(1, -1).map(c => c.trim());
+                    if (cells.length > 0) {
+                        tableRows.push(cells);
+                    }
                 }
                 i++;
             }
             if (tableRows.length > 0) {
                 const colSize = Math.max(...tableRows.map(r => r.length));
-                // Tagged as table data — handled separately by insertBlocksIntoDoc
-                blocks.push({ _tableRows: tableRows, _colSize: colSize } as unknown);
+                if (colSize > 0) {
+                    // Normalize: pad all rows to colSize so Lark gets consistent data
+                    const normalizedRows = tableRows.map(r => {
+                        while (r.length < colSize) r.push('');
+                        return r;
+                    });
+                    // Tagged as table data — handled separately by insertBlocksIntoDoc
+                    blocks.push({ _tableRows: normalizedRows, _colSize: colSize } as unknown);
+                }
             }
             continue;
         }
