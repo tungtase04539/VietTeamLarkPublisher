@@ -36,8 +36,24 @@ async function safeJson<T>(res: Response): Promise<T> {
 }
 
 export async function insertBlocksIntoDoc(token: string, documentId: string, blocks: unknown[]) {
-    const CHUNK = 50;
+    const CHUNK = 20; // Smaller chunks to avoid Lark API limits
     const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
+    const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+    /** Fetch with automatic retry on 429 rate-limit */
+    async function fetchWithRetry(url: string, init: RequestInit, maxRetries = 3): Promise<Response> {
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            const res = await fetch(url, init);
+            if (res.status === 429) {
+                const waitMs = Math.min(1000 * Math.pow(2, attempt), 5000);
+                console.warn(`[Lark] Rate limited (429), waiting ${waitMs}ms before retry ${attempt + 1}/${maxRetries}...`);
+                await delay(waitMs);
+                continue;
+            }
+            return res;
+        }
+        return fetch(url, init); // final attempt
+    }
 
     let indexOffset = 0;
     let i = 0;
@@ -237,17 +253,18 @@ export async function insertBlocksIntoDoc(token: string, documentId: string, blo
         }
         if (regularChunk.length === 0) { i++; continue; }
 
-        const res = await fetch(
+        const res = await fetchWithRetry(
             `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
             { method: 'POST', headers, body: JSON.stringify({ children: regularChunk, index: indexOffset }) }
         );
         const data = await safeJson<{ code: number; msg: string }>(res);
         if (data.code !== 0) {
-            // Batch failed — retry blocks one by one, skipping any that still fail
+            // Batch failed — retry blocks one by one with delays
             console.warn(`[Lark] Batch insert failed (code ${data.code}), retrying ${regularChunk.length} blocks individually...`);
             for (const singleBlock of regularChunk) {
                 try {
-                    const singleRes = await fetch(
+                    await delay(150); // throttle between individual inserts
+                    const singleRes = await fetchWithRetry(
                         `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
                         { method: 'POST', headers, body: JSON.stringify({ children: [singleBlock], index: indexOffset }) }
                     );
@@ -265,6 +282,9 @@ export async function insertBlocksIntoDoc(token: string, documentId: string, blo
             indexOffset += regularChunk.length;
         }
         i += regularChunk.length;
+
+        // Throttle between batches to avoid rate limiting
+        await delay(200);
     }
 }
 

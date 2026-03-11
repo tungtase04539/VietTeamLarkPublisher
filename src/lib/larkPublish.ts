@@ -446,8 +446,7 @@ async function createDocument(
 async function insertBlocks(token: string, documentId: string, blocks: unknown[]): Promise<void> {
     if (blocks.length === 0) return;
 
-    // Each request: max 50 blocks
-    const CHUNK = 50;
+    const CHUNK = 20;
     for (let i = 0; i < blocks.length; i += CHUNK) {
         const chunk = blocks.slice(i, i + CHUNK);
         const res = await fetch(
@@ -465,6 +464,10 @@ async function insertBlocks(token: string, documentId: string, blocks: unknown[]
         console.log(`[Lark] insertBlocks [${i}..${i + chunk.length}]:`, data);
         if (data.code !== 0) {
             throw new Error(`Failed to insert blocks: ${data.msg} (code ${data.code})`);
+        }
+        // Throttle between chunks
+        if (i + CHUNK < blocks.length) {
+            await new Promise(r => setTimeout(r, 200));
         }
     }
 }
