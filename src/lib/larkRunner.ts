@@ -58,6 +58,7 @@ export async function insertBlocksIntoDoc(token: string, documentId: string, blo
     let indexOffset = 0;
     let i = 0;
     while (i < blocks.length) {
+        if (i % 20 === 0) console.log(`[Lark] Progress: block ${i + 1}/${blocks.length} (${Math.round((i / blocks.length) * 100)}%)`);
         const block = blocks[i] as Record<string, unknown>;
 
         // ── Table block ──────────────────────────────────────────
@@ -234,13 +235,17 @@ export async function insertBlocksIntoDoc(token: string, documentId: string, blo
         // ── Image block (type 27) ──────────────────────────────────
         const blockRec = blocks[i] as Record<string, unknown>;
         if (blockRec.block_type === 27) {
-            const res = await fetch(
+            const res = await fetchWithRetry(
                 `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
                 { method: 'POST', headers, body: JSON.stringify({ children: [blockRec], index: indexOffset }) }
             );
             const data = await safeJson<{ code: number; msg: string }>(res);
-            if (data.code !== 0) throw new Error(`Insert image block failed: ${data.msg} (code ${data.code})`);
-            indexOffset++; i++; continue;
+            if (data.code === 0) {
+                indexOffset++;
+            } else {
+                console.warn('[Lark] Insert image block failed, skipping:', data.code, data.msg);
+            }
+            i++; continue;
         }
 
         // ── Regular blocks: batch ──────────────────────────────────

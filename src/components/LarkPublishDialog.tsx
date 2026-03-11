@@ -325,14 +325,17 @@ async function insertBlocksIntoDoc(token: string, documentId: string, blocks: un
         // ── Image block (block_type 27) already resolved — insert individually ──
         const blockRec = blocks[i] as Record<string, unknown>;
         if (blockRec.block_type === 27) {
-            const res = await fetch(
+            const res = await fetchWithRetry(
                 `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
                 { method: 'POST', headers, body: JSON.stringify({ children: [blockRec], index: indexOffset }) }
             );
             const data = await safeJson<{ code: number; msg: string }>(res);
             console.log('[Lark] insertImage block:', data);
-            if (data.code !== 0) throw new Error(`Insert image block failed: ${data.msg} (code ${data.code})`);
-            indexOffset++;
+            if (data.code === 0) {
+                indexOffset++;
+            } else {
+                console.warn('[Lark] Insert image block failed, skipping:', data.code, data.msg);
+            }
             i++;
             continue;
         }
