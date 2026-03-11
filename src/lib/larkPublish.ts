@@ -1,4 +1,5 @@
 // Vite dev proxy: /lark-api → https://open.larksuite.com (avoids CORS)
+import { insertBlocksIntoDoc as insertBlocks } from './larkInsert';
 const LARK_BASE = '/lark-api';
 const LARK_APP_ID = 'cli_a90a9b039db99ed1';
 const LARK_APP_SECRET = 'CEmFONDreMKKlXcf0UNAk76pFuEaYlz4';
@@ -442,35 +443,8 @@ async function createDocument(
 }
 
 // ─── Step 2: Insert blocks into document ─────────────────────────────────────
+// Delegated to larkInsert.ts for bulletproof retry + split logic
 
-async function insertBlocks(token: string, documentId: string, blocks: unknown[]): Promise<void> {
-    if (blocks.length === 0) return;
-
-    const CHUNK = 20;
-    for (let i = 0; i < blocks.length; i += CHUNK) {
-        const chunk = blocks.slice(i, i + CHUNK);
-        const res = await fetch(
-            `${LARK_BASE}/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
-            {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    'Content-Type': 'application/json; charset=utf-8',
-                },
-                body: JSON.stringify({ children: chunk, index: i }),
-            }
-        );
-        const data = await res.json() as { code: number; msg: string };
-        console.log(`[Lark] insertBlocks [${i}..${i + chunk.length}]:`, data);
-        if (data.code !== 0) {
-            throw new Error(`Failed to insert blocks: ${data.msg} (code ${data.code})`);
-        }
-        // Throttle between chunks
-        if (i + CHUNK < blocks.length) {
-            await new Promise(r => setTimeout(r, 200));
-        }
-    }
-}
 
 async function getDocumentUrl(token: string, documentId: string): Promise<string> {
     try {
