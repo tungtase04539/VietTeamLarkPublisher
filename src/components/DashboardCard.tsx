@@ -478,10 +478,9 @@ export default function DashboardCard({ card, onUpdate, onRemove, onDuplicate, o
         const reader = new FileReader();
         reader.onload = () => {
             const text = String(reader.result || '');
-            if (card.markdownInput.trim() && !window.confirm(`Thả và dịch "${file.name}"?`)) return;
+            if (card.markdownInput.trim() && !window.confirm(`Thả file "${file.name}" vào thẻ này?`)) return;
             const title = file.name.replace(/\.md$/i, '');
             onUpdate(card.id, { markdownInput: text, title: title || card.title });
-            handleTranslate(text);
         };
         reader.readAsText(file, 'utf-8');
     };
