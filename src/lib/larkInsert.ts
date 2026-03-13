@@ -19,6 +19,27 @@ const MAX_RETRIES = 3;          // retry attempts for any failed operation
 const TEXT_SPLIT_SIZE = 8000;   // split text at this char count (Lark safe limit)
 const BATCH_DELAY = 250;        // ms between batches
 const RETRY_BASE_DELAY = 500;   // base ms for retry backoff
+const MAX_CONCURRENT_IMAGES = 5; // max parallel image uploads
+
+// ─── Concurrency semaphore ────────────────────────────────────────────────────
+
+class Semaphore {
+    private running = 0;
+    private queue: (() => void)[] = [];
+    constructor(private limit: number) {}
+    acquire(): Promise<void> {
+        return new Promise(resolve => {
+            if (this.running < this.limit) { this.running++; resolve(); }
+            else { this.queue.push(resolve); }
+        });
+    }
+    release(): void {
+        this.running--;
+        if (this.queue.length > 0) { this.running++; this.queue.shift()!(); }
+    }
+}
+
+const imageSemaphore = new Semaphore(MAX_CONCURRENT_IMAGES);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -173,15 +194,78 @@ const cellChildrenUrl = (docId: string, cellBlockId: string) =>
     `${LARK_BASE}/open-apis/docx/v1/documents/${docId}/blocks/${cellBlockId}/children`;
 
 /**
- * Insert a table and populate all cells. Splits oversized cell text into
- * multiple text blocks within the same cell.
- * Returns number of indexOffset increments.
+ * Upload an image and insert it inside a table cell at the given index.
+ * Uses the 3-step Lark flow (create empty block → upload → PATCH token).
+ * Falls back to a text placeholder on failure.
+ */
+async function uploadImageInCell(
+    token: string, docId: string, headers: Record<string, string>,
+    cellBlockId: string, src: string, alt: string, cellIdx: number
+): Promise<void> {
+    await imageSemaphore.acquire();
+    try {
+        if (!src.startsWith('data:')) {
+            // External URL — insert as text link inside the cell
+            await larkPost<{ code: number; msg: string }>(
+                cellChildrenUrl(docId, cellBlockId),
+                { children: [{ block_type: 2, text: { elements: [{ text_run: { content: `[🖼️ ${alt}](${src})` } }], style: {} } }], index: cellIdx },
+                headers
+            );
+            return;
+        }
+
+        // Step 1: Create empty image block inside the cell
+        const { success: created, data: createData } = await larkPost<{
+            code: number; msg: string;
+            data?: { children?: { block_id: string }[] };
+        }>(
+            `${LARK_BASE}/open-apis/docx/v1/documents/${docId}/blocks/${cellBlockId}/children?document_revision_id=-1`,
+            { children: [{ block_type: 27, image: { token: '' } }], index: cellIdx },
+            headers
+        );
+        if (!created || !createData.data?.children?.[0]?.block_id) {
+            throw new Error(`Create image block in cell failed: ${createData.msg}`);
+        }
+        const imgBlockId = createData.data.children[0].block_id;
+        await delay(200);
+
+        // Step 2: Upload the image media
+        const fileToken = await uploadImageToLark(token, imgBlockId, src);
+        if (fileToken) {
+            // Step 3: PATCH with file_token
+            await larkFetch(
+                `${LARK_BASE}/open-apis/docx/v1/documents/${docId}/blocks/${imgBlockId}?document_revision_id=-1`,
+                { method: 'PATCH', headers, body: JSON.stringify({ replace_image: { token: fileToken } }) }
+            );
+        }
+    } catch (err) {
+        console.warn(`[Lark] Image in cell failed, text fallback:`, err);
+        // Fallback: text reference inside cell
+        await larkPost<{ code: number; msg: string }>(
+            cellChildrenUrl(docId, cellBlockId),
+            { children: [{ block_type: 2, text: { elements: [{ text_run: { content: `[🖼️ ${alt}]` } }], style: {} } }], index: cellIdx },
+            headers
+        );
+    } finally {
+        imageSemaphore.release();
+    }
+}
+
+/**
+ * Insert a table and populate all cells.
+ * Uses _tableCells (structured: text + image segments) when available,
+ * falling back to _tableRows (plain text strings).
+ * Images inside cells are uploaded via 3-step Lark flow.
  */
 async function insertTable(
+    token: string,
     docId: string, headers: Record<string, string>,
-    tableRows: string[][], colSize: number, indexOffset: number,
+    tableRows: string[][], tableCells: unknown[][][] | undefined,
+    colSize: number, indexOffset: number,
     result: PublishResult
 ): Promise<number> {
+    type CellSeg = { text?: string; img?: { src: string; alt: string } };
+
     // Step 1: Create the table structure
     const { success: tableCreated, data: tableData } = await larkPost<LarkBlockResponse>(
         childrenUrl(docId),
@@ -194,13 +278,12 @@ async function insertTable(
 
     if (!tableCreated) {
         console.warn('[Lark] Table creation failed, falling back to text rows:', tableData.msg);
-        // Fallback: render entire table as text paragraphs
         return await insertTableAsText(docId, headers, tableRows, indexOffset, result);
     }
 
     const tableBlockId = tableData.data?.children?.[0]?.block_id ?? '';
     let cellIds: string[] = tableData.data?.children?.[0]?.table?.cells ?? [];
-    let offset = 1; // table block itself
+    const offset = 1; // table block itself
 
     // Step 2: Get cell IDs if not returned directly
     if (cellIds.length === 0 && tableBlockId) {
@@ -216,34 +299,54 @@ async function insertTable(
         }
     }
 
-    // Step 3: Populate each cell with text (splitting oversized content)
+    // Step 3: Populate each cell
     for (let r = 0; r < tableRows.length; r++) {
         for (let c = 0; c < colSize; c++) {
-            const cellText = tableRows[r]?.[c] ?? '';
             const cellBlockId = cellIds[r * colSize + c];
-            if (!cellBlockId || !cellText) { await delay(50); continue; }
+            if (!cellBlockId) { await delay(50); continue; }
 
-            // Split text into safe chunks instead of truncating
-            const textChunks = splitText(cellText);
+            const segments = tableCells?.[r]?.[c] as CellSeg[] | undefined;
 
-            for (let ci = 0; ci < textChunks.length; ci++) {
-                const chunk = textChunks[ci];
-                const { success } = await larkPost<{ code: number; msg: string }>(
-                    cellChildrenUrl(docId, cellBlockId),
-                    {
-                        children: [{ block_type: 2, text: { elements: [{ text_run: { content: chunk } }], style: {} } }],
-                        index: ci, // each chunk at sequential index within the cell
-                    },
-                    headers
-                );
-
-                if (success) {
-                    result.successBlocks++;
-                } else {
-                    result.failedBlocks++;
-                    result.failedDetails.push(`Table cell [${r},${c}] chunk ${ci + 1}/${textChunks.length} (${chunk.length} chars)`);
+            if (segments && segments.length > 0) {
+                // Structured mode: handle text and image segments separately
+                let cellIdx = 0;
+                for (const seg of segments) {
+                    if (seg.img) {
+                        // Insert image inside the cell (concurrent upload)
+                        await uploadImageInCell(token, docId, headers, cellBlockId, seg.img.src, seg.img.alt, cellIdx);
+                        cellIdx++;
+                        result.successBlocks++;
+                    } else if (seg.text) {
+                        // Insert text segments, splitting if needed
+                        const textChunks = splitText(seg.text);
+                        for (const chunk of textChunks) {
+                            const { success } = await larkPost<{ code: number; msg: string }>(
+                                cellChildrenUrl(docId, cellBlockId),
+                                { children: [{ block_type: 2, text: { elements: [{ text_run: { content: chunk } }], style: {} } }], index: cellIdx },
+                                headers
+                            );
+                            if (success) { cellIdx++; result.successBlocks++; }
+                            else { result.failedBlocks++; result.failedDetails.push(`Cell [${r},${c}] text chunk`); }
+                            await delay(80);
+                        }
+                    }
                 }
-                await delay(120);
+            } else {
+                // Fallback: plain text from _tableRows
+                const cellText = tableRows[r]?.[c] ?? '';
+                if (!cellText) { await delay(50); continue; }
+                const textChunks = splitText(cellText);
+                for (let ci = 0; ci < textChunks.length; ci++) {
+                    const chunk = textChunks[ci];
+                    const { success } = await larkPost<{ code: number; msg: string }>(
+                        cellChildrenUrl(docId, cellBlockId),
+                        { children: [{ block_type: 2, text: { elements: [{ text_run: { content: chunk } }], style: {} } }], index: ci },
+                        headers
+                    );
+                    if (success) { result.successBlocks++; }
+                    else { result.failedBlocks++; result.failedDetails.push(`Cell [${r},${c}] chunk ${ci + 1}`); }
+                    await delay(120);
+                }
             }
         }
     }
@@ -484,13 +587,15 @@ export async function insertBlocksIntoDoc(
         // ── Table block ──────────────────────────────────────────────
         if (block._tableRows) {
             const tableRows = block._tableRows as string[][];
+            const tableCells = block._tableCells as unknown[][][] | undefined;
             const colSize = block._colSize as number;
             if (tableRows.length > 0 && colSize > 0) {
-                const added = await insertTable(documentId, headers, tableRows, colSize, indexOffset, result);
+                const added = await insertTable(token, documentId, headers, tableRows, tableCells, colSize, indexOffset, result);
                 indexOffset += added;
             }
             i++; continue;
         }
+
 
         // ── Pre-uploaded Lark image token ─────────────────────────────
         if (block._larkToken !== undefined) {

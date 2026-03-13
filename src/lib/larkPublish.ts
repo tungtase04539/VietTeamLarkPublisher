@@ -117,19 +117,37 @@ export async function resolveImageBlocks(
     imageStore: Map<string, string>,
     onProgress?: (uploaded: number, total: number) => void,
 ): Promise<unknown[]> {
+    function resolveImgSrc(src: string): string {
+        if (src.startsWith('img://')) {
+            return imageStore.get(src.slice(6)) ?? src;
+        }
+        return src;
+    }
+
     const resolved = blocks.map(b => {
         const block = b as Record<string, unknown>;
-        if (block._imageSrc === undefined) return b;
-        let src = block._imageSrc as string;
-        // Resolve img:// key → base64
-        if (src.startsWith('img://')) {
-            const key = src.slice(6);
-            src = imageStore.get(key) ?? src;
+
+        // Resolve top-level _imageSrc placeholder
+        if (block._imageSrc !== undefined) {
+            return { ...block, _imageSrc: resolveImgSrc(block._imageSrc as string) };
         }
-        // Keep as placeholder — insertion will create block then upload
-        return { ...block, _imageSrc: src };
+
+        // Resolve img:// refs inside table cell image segments
+        if (block._tableCells !== undefined) {
+            type CellSegment = { text?: string; img?: { src: string; alt: string } };
+            const tableCells = (block._tableCells as CellSegment[][][]).map(row =>
+                row.map(cellSegs =>
+                    cellSegs.map(seg =>
+                        seg.img ? { img: { ...seg.img, src: resolveImgSrc(seg.img.src) } } : seg
+                    )
+                )
+            );
+            return { ...block, _tableCells: tableCells };
+        }
+
+        return b;
     });
-    onProgress?.(0, 0); // no-op progress
+    onProgress?.(0, 0);
     return resolved;
 }
 
@@ -331,16 +349,37 @@ export function markdownToLarkBlocks(markdown: string, accentHex?: string): unkn
 
         // ── Table — collect all rows, tag for multi-step insertion ──
         if (line.startsWith('|')) {
+            type CellSeg = { text?: string; img?: { src: string; alt: string } };
             const tableRows: string[][] = [];
+            const structuredRows: CellSeg[][][] = [];
             while (i < lines.length && lines[i].startsWith('|')) {
                 const row = lines[i];
                 // Skip separator rows like |---|---|
                 if (!row.match(/^\|[\s:|-]+\|$/)) {
-                    // Handle rows that may or may not end with |
                     const trimmedRow = row.endsWith('|') ? row : row + '|';
                     const cells = trimmedRow.split('|').slice(1, -1).map(c => c.trim());
                     if (cells.length > 0) {
                         tableRows.push(cells);
+                        // Parse each cell for images
+                        const imgRe = /!\[([^\]]*)\]\(([^)]+)\)/g;
+                        const structuredCells: CellSeg[][] = cells.map(cellText => {
+                            const segs: CellSeg[] = [];
+                            let last = 0;
+                            let m: RegExpExecArray | null;
+                            imgRe.lastIndex = 0;
+                            while ((m = imgRe.exec(cellText)) !== null) {
+                                const before = cellText.slice(last, m.index).trim();
+                                if (before) segs.push({ text: before });
+                                segs.push({ img: { src: m[2], alt: m[1] || 'image' } });
+                                last = m.index + m[0].length;
+                            }
+                            const after = cellText.slice(last).trim();
+                            if (after) segs.push({ text: after });
+                            // If no segments found (pure text, no images), just one text seg
+                            if (segs.length === 0 && cellText) segs.push({ text: cellText });
+                            return segs;
+                        });
+                        structuredRows.push(structuredCells);
                     }
                 }
                 i++;
@@ -348,13 +387,19 @@ export function markdownToLarkBlocks(markdown: string, accentHex?: string): unkn
             if (tableRows.length > 0) {
                 const colSize = Math.max(...tableRows.map(r => r.length));
                 if (colSize > 0) {
-                    // Normalize: pad all rows to colSize so Lark gets consistent data
                     const normalizedRows = tableRows.map(r => {
                         while (r.length < colSize) r.push('');
                         return r;
                     });
-                    // Tagged as table data — handled separately by insertBlocksIntoDoc
-                    blocks.push({ _tableRows: normalizedRows, _colSize: colSize } as unknown);
+                    const normalizedStructured = structuredRows.map(r => {
+                        while (r.length < colSize) r.push([] as CellSeg[]);
+                        return r;
+                    });
+                    blocks.push({
+                        _tableRows: normalizedRows,
+                        _tableCells: normalizedStructured,
+                        _colSize: colSize,
+                    } as unknown);
                 }
             }
             continue;
