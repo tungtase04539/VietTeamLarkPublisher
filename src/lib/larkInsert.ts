@@ -2,11 +2,16 @@
  * larkInsert.ts
  * Bulletproof block insertion for Lark documents.
  *
+ * Key fix: uses index:-1 (Lark's "append at end") instead of manual
+ * indexOffset tracking. This prevents structure loss when any batch
+ * partially fails or returns unexpected counts.
+ *
  * Design principles:
- * 1. Split instead of truncate — long text is divided into multiple blocks
- * 2. Multi-retry with backoff — every operation retries up to MAX_RETRIES times
- * 3. Never stop mid-way — individual failures are logged and skipped
- * 4. Progress tracking — callers get real-time progress + final report
+ * 1. Append instead of position — index:-1 means Lark appends in order
+ * 2. Split instead of truncate — long text is divided into multiple blocks
+ * 3. Multi-retry with backoff — every operation retries up to MAX_RETRIES times
+ * 4. Never stop mid-way — individual failures are logged and skipped
+ * 5. Progress tracking — callers get real-time progress + final report
  */
 
 import { uploadImageToLark } from './larkPublish';
@@ -185,261 +190,36 @@ function splitText(text: string, maxLen: number = TEXT_SPLIT_SIZE): string[] {
     return chunks;
 }
 
-// ─── Block Insertion Handlers ─────────────────────────────────────────────────
+// ─── URL builders ─────────────────────────────────────────────────────────────
 
-const childrenUrl = (docId: string) =>
+// index:-1 means "append at end" in Lark API — safe, order-preserving
+const APPEND = -1;
+
+const docChildrenUrl = (docId: string) =>
     `${LARK_BASE}/open-apis/docx/v1/documents/${docId}/blocks/${docId}/children`;
 
 const cellChildrenUrl = (docId: string, cellBlockId: string) =>
     `${LARK_BASE}/open-apis/docx/v1/documents/${docId}/blocks/${cellBlockId}/children`;
 
-/**
- * Upload an image and insert it inside a table cell at the given index.
- * Uses the 3-step Lark flow (create empty block → upload → PATCH token).
- * Falls back to a text placeholder on failure.
- */
-async function uploadImageInCell(
-    token: string, docId: string, headers: Record<string, string>,
-    cellBlockId: string, src: string, alt: string, cellIdx: number
-): Promise<void> {
-    await imageSemaphore.acquire();
-    try {
-        if (!src.startsWith('data:')) {
-            // External URL — insert as text link inside the cell
-            await larkPost<{ code: number; msg: string }>(
-                cellChildrenUrl(docId, cellBlockId),
-                { children: [{ block_type: 2, text: { elements: [{ text_run: { content: `[🖼️ ${alt}](${src})` } }], style: {} } }], index: cellIdx },
-                headers
-            );
-            return;
-        }
-
-        // Step 1: Create empty image block inside the cell
-        const { success: created, data: createData } = await larkPost<{
-            code: number; msg: string;
-            data?: { children?: { block_id: string }[] };
-        }>(
-            `${LARK_BASE}/open-apis/docx/v1/documents/${docId}/blocks/${cellBlockId}/children?document_revision_id=-1`,
-            { children: [{ block_type: 27, image: { token: '' } }], index: cellIdx },
-            headers
-        );
-        if (!created || !createData.data?.children?.[0]?.block_id) {
-            throw new Error(`Create image block in cell failed: ${createData.msg}`);
-        }
-        const imgBlockId = createData.data.children[0].block_id;
-        await delay(200);
-
-        // Step 2: Upload the image media
-        const fileToken = await uploadImageToLark(token, imgBlockId, src);
-        if (fileToken) {
-            // Step 3: PATCH with file_token
-            await larkFetch(
-                `${LARK_BASE}/open-apis/docx/v1/documents/${docId}/blocks/${imgBlockId}?document_revision_id=-1`,
-                { method: 'PATCH', headers, body: JSON.stringify({ replace_image: { token: fileToken } }) }
-            );
-        }
-    } catch (err) {
-        console.warn(`[Lark] Image in cell failed, text fallback:`, err);
-        // Fallback: text reference inside cell
-        await larkPost<{ code: number; msg: string }>(
-            cellChildrenUrl(docId, cellBlockId),
-            { children: [{ block_type: 2, text: { elements: [{ text_run: { content: `[🖼️ ${alt}]` } }], style: {} } }], index: cellIdx },
-            headers
-        );
-    } finally {
-        imageSemaphore.release();
-    }
-}
+// ─── Image helpers ────────────────────────────────────────────────────────────
 
 /**
- * Insert a table and populate all cells.
- * Uses _tableCells (structured: text + image segments) when available,
- * falling back to _tableRows (plain text strings).
- * Images inside cells are uploaded via 3-step Lark flow.
- */
-async function insertTable(
-    token: string,
-    docId: string, headers: Record<string, string>,
-    tableRows: string[][], tableCells: unknown[][][] | undefined,
-    colSize: number, indexOffset: number,
-    result: PublishResult
-): Promise<number> {
-    type CellSeg = { text?: string; img?: { src: string; alt: string } };
-
-    // Step 1: Create the table structure
-    const { success: tableCreated, data: tableData } = await larkPost<LarkBlockResponse>(
-        childrenUrl(docId),
-        {
-            children: [{ block_type: 31, table: { property: { row_size: tableRows.length, column_size: colSize } } }],
-            index: indexOffset,
-        },
-        headers
-    );
-
-    if (!tableCreated) {
-        console.warn('[Lark] Table creation failed, falling back to text rows:', tableData.msg);
-        return await insertTableAsText(docId, headers, tableRows, indexOffset, result);
-    }
-
-    const tableBlockId = tableData.data?.children?.[0]?.block_id ?? '';
-    let cellIds: string[] = tableData.data?.children?.[0]?.table?.cells ?? [];
-    const offset = 1; // table block itself
-
-    // Step 2: Get cell IDs if not returned directly
-    if (cellIds.length === 0 && tableBlockId) {
-        try {
-            const cellsRes = await larkFetch(
-                `${LARK_BASE}/open-apis/docx/v1/documents/${docId}/blocks/${tableBlockId}/children`,
-                { headers }
-            );
-            const cellsData = await safeJson<{ code: number; data?: { children?: { block_id: string; block_type: number }[] } }>(cellsRes);
-            cellIds = (cellsData.data?.children ?? []).filter(b => b.block_type === 32).map(b => b.block_id);
-        } catch (err) {
-            console.warn('[Lark] Failed to get cell IDs:', err);
-        }
-    }
-
-    // Step 3: Populate each cell
-    for (let r = 0; r < tableRows.length; r++) {
-        for (let c = 0; c < colSize; c++) {
-            const cellBlockId = cellIds[r * colSize + c];
-            if (!cellBlockId) { await delay(50); continue; }
-
-            const segments = tableCells?.[r]?.[c] as CellSeg[] | undefined;
-
-            if (segments && segments.length > 0) {
-                // Structured mode: handle text and image segments separately
-                let cellIdx = 0;
-                for (const seg of segments) {
-                    if (seg.img) {
-                        // Insert image inside the cell (concurrent upload)
-                        await uploadImageInCell(token, docId, headers, cellBlockId, seg.img.src, seg.img.alt, cellIdx);
-                        cellIdx++;
-                        result.successBlocks++;
-                    } else if (seg.text) {
-                        // Insert text segments, splitting if needed
-                        const textChunks = splitText(seg.text);
-                        for (const chunk of textChunks) {
-                            const { success } = await larkPost<{ code: number; msg: string }>(
-                                cellChildrenUrl(docId, cellBlockId),
-                                { children: [{ block_type: 2, text: { elements: [{ text_run: { content: chunk } }], style: {} } }], index: cellIdx },
-                                headers
-                            );
-                            if (success) { cellIdx++; result.successBlocks++; }
-                            else { result.failedBlocks++; result.failedDetails.push(`Cell [${r},${c}] text chunk`); }
-                            await delay(80);
-                        }
-                    }
-                }
-            } else {
-                // Fallback: plain text from _tableRows
-                const cellText = tableRows[r]?.[c] ?? '';
-                if (!cellText) { await delay(50); continue; }
-                const textChunks = splitText(cellText);
-                for (let ci = 0; ci < textChunks.length; ci++) {
-                    const chunk = textChunks[ci];
-                    const { success } = await larkPost<{ code: number; msg: string }>(
-                        cellChildrenUrl(docId, cellBlockId),
-                        { children: [{ block_type: 2, text: { elements: [{ text_run: { content: chunk } }], style: {} } }], index: ci },
-                        headers
-                    );
-                    if (success) { result.successBlocks++; }
-                    else { result.failedBlocks++; result.failedDetails.push(`Cell [${r},${c}] chunk ${ci + 1}`); }
-                    await delay(120);
-                }
-            }
-        }
-    }
-
-    return offset;
-}
-
-/**
- * Fallback: render table as plain text paragraphs.
- * Also splits oversized rows.
- */
-async function insertTableAsText(
-    docId: string, headers: Record<string, string>,
-    tableRows: string[][], indexOffset: number,
-    result: PublishResult
-): Promise<number> {
-    let offset = 0;
-    for (const row of tableRows) {
-        const rowText = '| ' + row.join(' | ') + ' |';
-        const chunks = splitText(rowText, TEXT_SPLIT_SIZE);
-
-        for (const chunk of chunks) {
-            const { success } = await larkPost<{ code: number; msg: string }>(
-                childrenUrl(docId),
-                {
-                    children: [{ block_type: 2, text: { elements: [{ text_run: { content: chunk } }], style: {} } }],
-                    index: indexOffset + offset,
-                },
-                headers
-            );
-            if (success) {
-                offset++;
-                result.successBlocks++;
-            } else {
-                result.failedBlocks++;
-                result.failedDetails.push(`Table text fallback row (${chunk.length} chars)`);
-            }
-            await delay(100);
-        }
-    }
-    return offset;
-}
-
-/**
- * Insert a pre-uploaded Lark image token.
- */
-async function insertLarkToken(
-    docId: string, headers: Record<string, string>,
-    larkFileToken: string, indexOffset: number,
-    result: PublishResult
-): Promise<number> {
-    const imgBlock = { block_type: 27, image: { token: larkFileToken } };
-    const { success } = await larkPost<{ code: number; msg: string }>(
-        childrenUrl(docId),
-        { children: [imgBlock], index: indexOffset },
-        headers
-    );
-
-    if (success) {
-        result.successBlocks++;
-        return 1;
-    }
-
-    // Fallback: text reference
-    console.warn('[Lark] Direct image insert failed, using text fallback for token:', larkFileToken);
-    const textFb = { block_type: 2, text: { elements: [{ text_run: { content: `[🖼️ img:${larkFileToken.slice(0, 12)}…]` } }], style: {} } };
-    const { success: fbOk } = await larkPost<{ code: number; msg: string }>(
-        childrenUrl(docId),
-        { children: [textFb], index: indexOffset },
-        headers
-    );
-    if (fbOk) { result.successBlocks++; return 1; }
-    result.failedBlocks++;
-    result.failedDetails.push(`Image token ${larkFileToken.slice(0, 12)}`);
-    return 0;
-}
-
-/**
- * Insert a base64 image via 3-step flow.
+ * Upload an image and insert it as a top-level block (3-step flow).
  */
 async function insertBase64Image(
     token: string, docId: string, headers: Record<string, string>,
-    src: string, alt: string, indexOffset: number,
+    src: string, alt: string,
     result: PublishResult
-): Promise<number> {
+): Promise<void> {
+    await imageSemaphore.acquire();
     try {
-        // Step 1: Create empty image block
+        // Step 1: Create empty image block (appended at end)
         const { success: created, data: createData } = await larkPost<{
             code: number; msg: string;
             data?: { children?: { block_id: string }[] };
         }>(
-            `${childrenUrl(docId)}?document_revision_id=-1`,
-            { children: [{ block_type: 27, image: { token: '' } }], index: indexOffset },
+            `${docChildrenUrl(docId)}?document_revision_id=-1`,
+            { children: [{ block_type: 27, image: { token: '' } }], index: APPEND },
             headers
         );
 
@@ -466,94 +246,198 @@ async function insertBase64Image(
         }
 
         result.successBlocks++;
-        return 1;
     } catch (imgErr) {
         console.warn('[Lark] Image 3-step failed, text fallback:', imgErr);
+        // Fallback: text placeholder appended at end
         const fb = { block_type: 2, text: { elements: [{ text_run: { content: `[🖼️ ${alt}]` } }], style: {} } };
         const { success } = await larkPost<{ code: number; msg: string }>(
-            childrenUrl(docId),
-            { children: [fb], index: indexOffset },
+            docChildrenUrl(docId),
+            { children: [fb], index: APPEND },
             headers
         );
-        if (success) { result.successBlocks++; return 1; }
-        result.failedBlocks++;
-        result.failedDetails.push(`Base64 image (${alt})`);
-        return 0;
+        if (success) { result.successBlocks++; }
+        else { result.failedBlocks++; result.failedDetails.push(`Base64 image (${alt})`); }
+    } finally {
+        imageSemaphore.release();
     }
 }
 
 /**
- * Insert an external URL image as a text link.
+ * Upload an image and insert it inside a table cell (3-step flow).
  */
-async function insertImageLink(
-    docId: string, headers: Record<string, string>,
-    src: string, alt: string, indexOffset: number,
-    result: PublishResult
-): Promise<number> {
-    const textBlock = { block_type: 2, text: { elements: [{ text_run: { content: `[🖼️ ${alt}](${src})` } }], style: {} } };
-    const { success } = await larkPost<{ code: number; msg: string }>(
-        childrenUrl(docId),
-        { children: [textBlock], index: indexOffset },
-        headers
-    );
-    if (success) { result.successBlocks++; return 1; }
-    result.failedBlocks++;
-    result.failedDetails.push(`Image link (${alt})`);
-    return 0;
-}
-
-/**
- * Insert a batch of regular (non-table, non-image) blocks.
- * If batch fails, retries each block individually.
- */
-async function insertRegularBatch(
-    docId: string, headers: Record<string, string>,
-    chunk: unknown[], indexOffset: number,
-    result: PublishResult
-): Promise<number> {
-    // Try batch first
-    const { success, data } = await larkPost<{ code: number; msg: string }>(
-        childrenUrl(docId),
-        { children: chunk, index: indexOffset },
-        headers
-    );
-
-    if (success) {
-        result.successBlocks += chunk.length;
-        return chunk.length;
-    }
-
-    // Batch failed — insert individually with retries
-    console.warn(`[Lark] Batch failed (code ${data.code}), inserting ${chunk.length} blocks individually...`);
-    let offset = 0;
-    for (const singleBlock of chunk) {
-        const { success: sOk } = await larkPost<{ code: number; msg: string }>(
-            childrenUrl(docId),
-            { children: [singleBlock], index: indexOffset + offset },
-            headers
-        );
-        if (sOk) {
-            offset++;
-            result.successBlocks++;
-        } else {
-            result.failedBlocks++;
-            const desc = JSON.stringify(singleBlock).slice(0, 80);
-            result.failedDetails.push(`Block: ${desc}`);
+async function uploadImageInCell(
+    token: string, docId: string, headers: Record<string, string>,
+    cellBlockId: string, src: string, alt: string
+): Promise<void> {
+    await imageSemaphore.acquire();
+    try {
+        if (!src.startsWith('data:')) {
+            // External URL — insert as text link inside the cell (append in cell)
+            await larkPost<{ code: number; msg: string }>(
+                cellChildrenUrl(docId, cellBlockId),
+                { children: [{ block_type: 2, text: { elements: [{ text_run: { content: `[🖼️ ${alt}](${src})` } }], style: {} } }], index: APPEND },
+                headers
+            );
+            return;
         }
-        await delay(150);
+
+        // Step 1: Create empty image block inside the cell
+        const { success: created, data: createData } = await larkPost<{
+            code: number; msg: string;
+            data?: { children?: { block_id: string }[] };
+        }>(
+            `${LARK_BASE}/open-apis/docx/v1/documents/${docId}/blocks/${cellBlockId}/children?document_revision_id=-1`,
+            { children: [{ block_type: 27, image: { token: '' } }], index: APPEND },
+            headers
+        );
+        if (!created || !createData.data?.children?.[0]?.block_id) {
+            throw new Error(`Create image block in cell failed: ${createData.msg}`);
+        }
+        const imgBlockId = createData.data.children[0].block_id;
+        await delay(200);
+
+        // Step 2: Upload the image media
+        const fileToken = await uploadImageToLark(token, imgBlockId, src);
+        if (fileToken) {
+            // Step 3: PATCH with file_token
+            await larkFetch(
+                `${LARK_BASE}/open-apis/docx/v1/documents/${docId}/blocks/${imgBlockId}?document_revision_id=-1`,
+                { method: 'PATCH', headers, body: JSON.stringify({ replace_image: { token: fileToken } }) }
+            );
+        }
+    } catch (err) {
+        console.warn(`[Lark] Image in cell failed, text fallback:`, err);
+        await larkPost<{ code: number; msg: string }>(
+            cellChildrenUrl(docId, cellBlockId),
+            { children: [{ block_type: 2, text: { elements: [{ text_run: { content: `[🖼️ ${alt}]` } }], style: {} } }], index: APPEND },
+            headers
+        );
+    } finally {
+        imageSemaphore.release();
     }
-    return offset;
+}
+
+// ─── Table handlers ───────────────────────────────────────────────────────────
+
+/**
+ * Insert a table and populate all cells.
+ * Images inside cells get uploaded via 3-step Lark flow.
+ * Falls back to text rows if table creation fails.
+ */
+async function insertTable(
+    token: string,
+    docId: string, headers: Record<string, string>,
+    tableRows: string[][], tableCells: unknown[][][] | undefined,
+    colSize: number,
+    result: PublishResult
+): Promise<void> {
+    type CellSeg = { text?: string; img?: { src: string; alt: string } };
+
+    // Step 1: Create the table structure (appended at end of document)
+    const { success: tableCreated, data: tableData } = await larkPost<LarkBlockResponse>(
+        docChildrenUrl(docId),
+        {
+            children: [{ block_type: 31, table: { property: { row_size: tableRows.length, column_size: colSize } } }],
+            index: APPEND,
+        },
+        headers
+    );
+
+    if (!tableCreated) {
+        console.warn('[Lark] Table creation failed, falling back to text rows:', tableData.msg);
+        // Fallback: render each row as a text paragraph
+        for (const row of tableRows) {
+            const rowText = '| ' + row.join(' | ') + ' |';
+            const chunks = splitText(rowText, TEXT_SPLIT_SIZE);
+            for (const chunk of chunks) {
+                const { success } = await larkPost<{ code: number; msg: string }>(
+                    docChildrenUrl(docId),
+                    { children: [{ block_type: 2, text: { elements: [{ text_run: { content: chunk } }], style: {} } }], index: APPEND },
+                    headers
+                );
+                if (success) { result.successBlocks++; }
+                else { result.failedBlocks++; result.failedDetails.push(`Table text row (${chunk.length} chars)`); }
+                await delay(100);
+            }
+        }
+        return;
+    }
+
+    const tableBlockId = tableData.data?.children?.[0]?.block_id ?? '';
+    let cellIds: string[] = tableData.data?.children?.[0]?.table?.cells ?? [];
+
+    // Step 2: Get cell IDs if not returned directly
+    if (cellIds.length === 0 && tableBlockId) {
+        try {
+            const cellsRes = await larkFetch(
+                `${LARK_BASE}/open-apis/docx/v1/documents/${docId}/blocks/${tableBlockId}/children`,
+                { headers }
+            );
+            const cellsData = await safeJson<{ code: number; data?: { children?: { block_id: string; block_type: number }[] } }>(cellsRes);
+            cellIds = (cellsData.data?.children ?? []).filter(b => b.block_type === 32).map(b => b.block_id);
+        } catch (err) {
+            console.warn('[Lark] Failed to get cell IDs:', err);
+        }
+    }
+
+    // Step 3: Populate each cell (cells use APPEND within their own children)
+    for (let r = 0; r < tableRows.length; r++) {
+        for (let c = 0; c < colSize; c++) {
+            const cellBlockId = cellIds[r * colSize + c];
+            if (!cellBlockId) { await delay(50); continue; }
+
+            const segments = tableCells?.[r]?.[c] as CellSeg[] | undefined;
+
+            if (segments && segments.length > 0) {
+                // Structured mode: text + image segments
+                for (const seg of segments) {
+                    if (seg.img) {
+                        await uploadImageInCell(token, docId, headers, cellBlockId, seg.img.src, seg.img.alt);
+                        result.successBlocks++;
+                    } else if (seg.text) {
+                        const textChunks = splitText(seg.text);
+                        for (const chunk of textChunks) {
+                            const { success } = await larkPost<{ code: number; msg: string }>(
+                                cellChildrenUrl(docId, cellBlockId),
+                                { children: [{ block_type: 2, text: { elements: [{ text_run: { content: chunk } }], style: {} } }], index: APPEND },
+                                headers
+                            );
+                            if (success) { result.successBlocks++; }
+                            else { result.failedBlocks++; result.failedDetails.push(`Cell [${r},${c}] text chunk`); }
+                            await delay(80);
+                        }
+                    }
+                }
+            } else {
+                // Plain text fallback
+                const cellText = tableRows[r]?.[c] ?? '';
+                if (!cellText) { await delay(50); continue; }
+                const textChunks = splitText(cellText);
+                for (const chunk of textChunks) {
+                    const { success } = await larkPost<{ code: number; msg: string }>(
+                        cellChildrenUrl(docId, cellBlockId),
+                        { children: [{ block_type: 2, text: { elements: [{ text_run: { content: chunk } }], style: {} } }], index: APPEND },
+                        headers
+                    );
+                    if (success) { result.successBlocks++; }
+                    else { result.failedBlocks++; result.failedDetails.push(`Cell [${r},${c}] chunk`); }
+                    await delay(120);
+                }
+            }
+        }
+    }
 }
 
 // ─── Main Export ──────────────────────────────────────────────────────────────
 
 /**
- * Insert all blocks into a Lark document, guaranteeing maximum content delivery.
+ * Insert all blocks into a Lark document using append mode (index:-1).
+ * This guarantees correct document structure regardless of failures.
  *
- * - Tables: cells split into multiple text blocks (no truncation)
+ * - All blocks are appended sequentially (no index tracking needed)
+ * - Tables: created as proper Lark tables, cells populated with text/images
  * - Images: 3-step upload with fallback to text placeholder
- * - Regular blocks: batch with individual retry fallback
- * - All operations: retry up to 3 times with exponential backoff
+ * - Regular blocks: batched (up to CHUNK_SIZE), individual retry on batch fail
  *
  * @returns PublishResult with detailed success/failure report
  */
@@ -571,7 +455,6 @@ export async function insertBlocksIntoDoc(
         failedDetails: [],
     };
 
-    let indexOffset = 0;
     let i = 0;
 
     while (i < blocks.length) {
@@ -590,19 +473,31 @@ export async function insertBlocksIntoDoc(
             const tableCells = block._tableCells as unknown[][][] | undefined;
             const colSize = block._colSize as number;
             if (tableRows.length > 0 && colSize > 0) {
-                const added = await insertTable(token, documentId, headers, tableRows, tableCells, colSize, indexOffset, result);
-                indexOffset += added;
+                await insertTable(token, documentId, headers, tableRows, tableCells, colSize, result);
             }
             i++; continue;
         }
 
-
         // ── Pre-uploaded Lark image token ─────────────────────────────
         if (block._larkToken !== undefined) {
-            const added = await insertLarkToken(
-                documentId, headers, block._larkToken as string, indexOffset, result
+            const imgBlock = { block_type: 27, image: { token: block._larkToken as string } };
+            const { success } = await larkPost<{ code: number; msg: string }>(
+                docChildrenUrl(documentId),
+                { children: [imgBlock], index: APPEND },
+                headers
             );
-            indexOffset += added;
+            if (success) { result.successBlocks++; }
+            else {
+                console.warn('[Lark] Direct image token insert failed, using text fallback');
+                const textFb = { block_type: 2, text: { elements: [{ text_run: { content: `[🖼️ img:${(block._larkToken as string).slice(0, 12)}…]` } }], style: {} } };
+                const { success: fbOk } = await larkPost<{ code: number; msg: string }>(
+                    docChildrenUrl(documentId),
+                    { children: [textFb], index: APPEND },
+                    headers
+                );
+                if (fbOk) { result.successBlocks++; }
+                else { result.failedBlocks++; result.failedDetails.push(`Image token ${(block._larkToken as string).slice(0, 12)}`); }
+            }
             i++; continue;
         }
 
@@ -612,11 +507,17 @@ export async function insertBlocksIntoDoc(
             const alt = (block._imageAlt as string) || 'image';
 
             if (src.startsWith('data:')) {
-                const added = await insertBase64Image(token, documentId, headers, src, alt, indexOffset, result);
-                indexOffset += added;
+                await insertBase64Image(token, documentId, headers, src, alt, result);
             } else {
-                const added = await insertImageLink(documentId, headers, src, alt, indexOffset, result);
-                indexOffset += added;
+                // External URL image — insert as text link
+                const textBlock = { block_type: 2, text: { elements: [{ text_run: { content: `[🖼️ ${alt}](${src})` } }], style: {} } };
+                const { success } = await larkPost<{ code: number; msg: string }>(
+                    docChildrenUrl(documentId),
+                    { children: [textBlock], index: APPEND },
+                    headers
+                );
+                if (success) { result.successBlocks++; }
+                else { result.failedBlocks++; result.failedDetails.push(`Image link (${alt})`); }
             }
             i++; continue;
         }
@@ -624,16 +525,16 @@ export async function insertBlocksIntoDoc(
         // ── Standalone image block (type 27) ──────────────────────────
         if (block.block_type === 27) {
             const { success } = await larkPost<{ code: number; msg: string }>(
-                childrenUrl(documentId),
-                { children: [block], index: indexOffset },
+                docChildrenUrl(documentId),
+                { children: [block], index: APPEND },
                 headers
             );
-            if (success) { indexOffset++; result.successBlocks++; }
+            if (success) { result.successBlocks++; }
             else { result.failedBlocks++; result.failedDetails.push('Image block (type 27)'); }
             i++; continue;
         }
 
-        // ── Regular blocks: collect batch ─────────────────────────────
+        // ── Regular blocks: collect batch and append ──────────────────
         const batchEnd = Math.min(i + CHUNK_SIZE, blocks.length);
         const regularChunk: unknown[] = [];
         for (let j = i; j < batchEnd; j++) {
@@ -642,11 +543,41 @@ export async function insertBlocksIntoDoc(
             regularChunk.push(b);
         }
 
-        if (regularChunk.length === 0) { i++; continue; }
+        if (regularChunk.length === 0) {
+            // This block doesn't match any known type — skip with a warning
+            console.warn('[Lark] Unknown block type at index', i, '— skipping:', JSON.stringify(block).slice(0, 80));
+            i++; continue;
+        }
 
-        const added = await insertRegularBatch(documentId, headers, regularChunk, indexOffset, result);
-        indexOffset += added;
-        i += regularChunk.length;
+        // Try batch first (all appended at end)
+        const { success, data } = await larkPost<{ code: number; msg: string }>(
+            docChildrenUrl(documentId),
+            { children: regularChunk, index: APPEND },
+            headers
+        );
+
+        if (success) {
+            result.successBlocks += regularChunk.length;
+            i += regularChunk.length;
+        } else {
+            // Batch failed — insert individually
+            console.warn(`[Lark] Batch failed (code ${data.code}), inserting ${regularChunk.length} blocks individually...`);
+            for (const singleBlock of regularChunk) {
+                const { success: sOk } = await larkPost<{ code: number; msg: string }>(
+                    docChildrenUrl(documentId),
+                    { children: [singleBlock], index: APPEND },
+                    headers
+                );
+                if (sOk) { result.successBlocks++; }
+                else {
+                    result.failedBlocks++;
+                    const desc = JSON.stringify(singleBlock).slice(0, 80);
+                    result.failedDetails.push(`Block: ${desc}`);
+                }
+                await delay(150);
+            }
+            i += regularChunk.length;
+        }
 
         await delay(BATCH_DELAY);
     }
