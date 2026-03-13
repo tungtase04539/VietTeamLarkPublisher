@@ -54,7 +54,9 @@ STRICT RULES — you MUST follow all of these exactly:
 7. Preserve ALL blank lines and line spacing exactly as in the input.
 8. Do NOT add any explanations, comments, or wrapping. Return ONLY the translated Markdown.
 9. Do NOT change the number of lines. Every input line maps to one output line.
-10. HTML tags like <br>, <span>, <p> must be kept exactly as-is.`;
+10. HTML tags like <br>, <span>, <p> must be kept exactly as-is.
+11. IMPORTANT: @mentions that contain Chinese characters (e.g. @图片1, @图片2, @素材3) MUST be translated. Translate the Chinese label part ONLY, keep the @ and any number suffix. Example: @图片1 → @Hình ảnh 1, @素材2 → @Chất liệu 2.
+12. ALL Chinese characters anywhere in the text — including inside parentheses, labels, captions, or @mentions — MUST be translated. Do not leave any Chinese character untranslated.`;
 
 export const AI302_BASE_URL = 'https://api.302.ai/v1';
 

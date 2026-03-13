@@ -166,6 +166,51 @@ function splitIntoChunks(content: string, maxChunkSize = 3000): string[] {
     return chunks;
 }
 
+// ── Check for remaining CJK characters ─────────────────────────────
+const CJK_RE = /[\u4e00-\u9fff\u3400-\u4dbf]/;
+
+/**
+ * After main translation, scan for any remaining Chinese/CJK characters.
+ * If found, send those specific lines back for a targeted re-translation.
+ * Catches @图片1 style mentions and any other content the main pass missed.
+ */
+async function cleanupRemainingChinese(text: string): Promise<string> {
+    const lines = text.split('\n');
+    const badLineIndices = lines
+        .map((line, idx) => ({ idx, line }))
+        .filter(({ line }) => CJK_RE.test(line));
+
+    if (badLineIndices.length === 0) return text;
+
+    console.log(`[Translate] ${badLineIndices.length} lines still have Chinese — running cleanup pass...`);
+
+    const miniDoc = badLineIndices.map(({ line }) => line).join('\n');
+
+    // Prepend a clear instruction prefix so the API focuses on full translation of Chinese
+    const instructionPrefix = 'IMPORTANT: Translate ALL Chinese characters in the following text to Vietnamese. @mentions (e.g. @图片1) → translate the Chinese label, keep @ and numbers (→ @Hình ảnh 1). Return ONLY the translated lines, same count:\n\n';
+
+    try {
+        const raw = await callTranslateAPI(instructionPrefix + miniDoc);
+        const translatedLines = raw.trim().split('\n');
+
+        const resultLines = [...lines];
+        badLineIndices.forEach(({ idx }, i) => {
+            if (translatedLines[i] !== undefined) {
+                resultLines[idx] = translatedLines[i];
+            }
+        });
+        // If cleanup itself left CJK, log but don't loop
+        const remaining = resultLines.filter(l => CJK_RE.test(l)).length;
+        if (remaining > 0) {
+            console.warn(`[Translate] ${remaining} lines still have Chinese after cleanup — may need manual review`);
+        }
+        return resultLines.join('\n');
+    } catch (err) {
+        console.warn('[Translate] Cleanup pass failed:', err);
+        return text;
+    }
+}
+
 // ── Main export ───────────────────────────────────────────────────
 export async function translateMarkdown(
     content: string,
@@ -182,7 +227,10 @@ export async function translateMarkdown(
         })
     );
     const joined = translatedChunks.join('\n\n');
-    const result = restoreCodeBlocks(joined, codeMap);
+    const restored = restoreCodeBlocks(joined, codeMap);
+
+    // ── Safety pass: re-translate any remaining Chinese characters ──
+    const result = await cleanupRemainingChinese(restored);
 
     // ── Track usage ──────────────────────────────────────────────
     try {
